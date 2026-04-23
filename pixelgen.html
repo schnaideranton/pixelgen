@@ -863,25 +863,25 @@ if(typeof CanvasRenderingContext2D!=='undefined' && !CanvasRenderingContext2D.pr
   };
 }
 function filletTL(ctx,px,py,r,col){
-  ctx.fillStyle=col; ctx.beginPath();
+  ctx.fillStyle=toHexColor(col); ctx.beginPath();
   ctx.moveTo(px,py); ctx.lineTo(px+r,py);
   ctx.arc(px+r,py+r,r,-Math.PI/2,Math.PI,true);
   ctx.closePath(); ctx.fill();
 }
 function filletTR(ctx,px,py,z,r,col){
-  ctx.fillStyle=col; ctx.beginPath();
+  ctx.fillStyle=toHexColor(col); ctx.beginPath();
   ctx.moveTo(px+z,py); ctx.lineTo(px+z-r,py);
   ctx.arc(px+z-r,py+r,r,-Math.PI/2,0,false);
   ctx.closePath(); ctx.fill();
 }
 function filletBL(ctx,px,py,z,r,col){
-  ctx.fillStyle=col; ctx.beginPath();
+  ctx.fillStyle=toHexColor(col); ctx.beginPath();
   ctx.moveTo(px,py+z); ctx.lineTo(px+r,py+z);
   ctx.arc(px+r,py+z-r,r,Math.PI/2,Math.PI,false);
   ctx.closePath(); ctx.fill();
 }
 function filletBR(ctx,px,py,z,r,col){
-  ctx.fillStyle=col; ctx.beginPath();
+  ctx.fillStyle=toHexColor(col); ctx.beginPath();
   ctx.moveTo(px+z,py+z); ctx.lineTo(px+z-r,py+z);
   ctx.arc(px+z-r,py+z-r,r,Math.PI/2,0,true);
   ctx.closePath(); ctx.fill();
@@ -918,7 +918,7 @@ function drawPatternToCtx(ctx, M, G, n, z, x0, y0, opts){
     const col = G[y][x]; if(!col) continue;
     const px = x0 + x*z, py = y0 + y*z;
     if(gradient) _blendFill(ctx,col,M,G,n,x,y,px,py,z);
-    else ctx.fillStyle=col;
+    else ctx.fillStyle=toHexColor(col);
     if(outer){
       const topE  = y===0   || !M[y-1][x];
       const botE  = y===n-1 || !M[y+1][x];
@@ -1401,6 +1401,17 @@ document.getElementById('autoplay').addEventListener('click',toggleAutoplay);
 document.getElementById('fullscreen').addEventListener('click',toggleFullscreen);
 document.getElementById('fsAutoplay').addEventListener('click',toggleAutoplay);
 document.getElementById('fsExit').addEventListener('click',toggleFullscreen);
+// surface toggles → immediate re-render without regenerating patterns
+['outer','inner','gradblend'].forEach(id=>{
+  document.getElementById(id).addEventListener('click',e=>{
+    if(e.target.tagName!=='BUTTON'||!state) return;
+    const v=e.target.dataset.v==='1';
+    if(id==='outer') state.outerRound=v;
+    if(id==='inner') state.innerRound=v;
+    if(id==='gradblend') state.gradBlend=v;
+    render();
+  });
+});
 document.getElementById('save').addEventListener('click',saveCanvas);
 document.getElementById('savejson').addEventListener('click',saveJson);
 document.getElementById('download').addEventListener('click',downloadCanvas);
