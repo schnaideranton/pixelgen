@@ -302,6 +302,12 @@ body.fs{overflow:hidden!important;position:fixed;width:100%;height:100%}
     </div>
 
     <div class="save-group full">
+      <div class="row" style="margin-bottom:6px"><label>format</label>
+        <div class="seg" id="savefmt" data-val="png" style="flex:1.2">
+          <button data-v="png" class="on">PNG</button>
+          <button data-v="svg">SVG</button>
+        </div>
+      </div>
       <button id="save">save png → folder</button>
       <button id="savejson">save patterns json</button>
       <button id="download">download png (fallback)</button>
@@ -1021,19 +1027,32 @@ function renderSinglePattern(p, n, bg, opts){
 async function savePatternAt(idx){
   if(!state || !state.patterns || !state.patterns[idx]) return;
   const s = state, p = s.patterns[idx];
-  if(!dirHandle){ const ok=await linkFolder(); if(!ok) return; }
-  const out = renderSinglePattern(p, s.n, s.bg, {outer:s.outerRound, inner:s.innerRound});
-  const row = Math.floor(idx / s.cols);
-  const col = idx % s.cols;
-  const name = `pxlg_sym_${stamp()}_${s.mode}_${s.paletteMode}_${s.n}x${s.n}_r${row}c${col}.png`;
-  try{
-    const blob = await new Promise(r=>out.toBlob(r,'image/png'));
-    const fh = await dirHandle.getFileHandle(name,{create:true});
-    const w = await fh.createWritable();
-    await w.write(blob); await w.close();
-    setStatus(`saved symbol → ${name}`,'ok');
-    flashSaved(idx);
-  } catch(e){ setStatus(`save failed: ${e.message}`,'err'); }
+  const row = Math.floor(idx / s.cols), col = idx % s.cols;
+  const fmt = getFormat();
+  if(fmt==='svg'){
+    if(!dirHandle){ const ok=await linkFolder(); if(!ok) return; }
+    const svg = patternToSVG(p, s);
+    const blob = new Blob([svg],{type:'image/svg+xml'});
+    const name = `pxlg_sym_${stamp()}_${s.mode}_${s.paletteMode}_${s.n}x${s.n}_r${row}c${col}.svg`;
+    try{
+      const fh=await dirHandle.getFileHandle(name,{create:true});
+      const w=await fh.createWritable();await w.write(blob);await w.close();
+      setStatus(`saved symbol → ${name}`,'ok');
+      flashSaved(idx);
+    } catch(e){setStatus(`save failed: ${e.message}`,'err')}
+  } else {
+    if(!dirHandle){ const ok=await linkFolder(); if(!ok) return; }
+    const out = renderSinglePattern(p, s.n, s.bg, {outer:s.outerRound, inner:s.innerRound});
+    const name = `pxlg_sym_${stamp()}_${s.mode}_${s.paletteMode}_${s.n}x${s.n}_r${row}c${col}.png`;
+    try{
+      const blob = await new Promise(r=>out.toBlob(r,'image/png'));
+      const fh = await dirHandle.getFileHandle(name,{create:true});
+      const w = await fh.createWritable();
+      await w.write(blob); await w.close();
+      setStatus(`saved symbol → ${name}`,'ok');
+      flashSaved(idx);
+    } catch(e){ setStatus(`save failed: ${e.message}`,'err'); }
+  }
 }
 function flashSaved(idx){
   if(!state) return;
@@ -1055,6 +1074,92 @@ function flashSaved(idx){
   flash.style.height = (blockSize * ratio) + 'px';
   holder.appendChild(flash);
   setTimeout(()=>flash.remove(), 600);
+}
+
+// ========== SVG export ==========
+function svgRoundRect(x,y,w,h,tl,tr,br,bl){
+  const p=[];
+  p.push(`M ${x+tl} ${y} L ${x+w-tr} ${y}`);
+  p.push(tr?`A ${tr} ${tr} 0 0 1 ${x+w} ${y+tr}`:`L ${x+w} ${y}`);
+  p.push(`L ${x+w} ${y+h-br}`);
+  p.push(br?`A ${br} ${br} 0 0 1 ${x+w-br} ${y+h}`:`L ${x+w} ${y+h}`);
+  p.push(`L ${x+bl} ${y+h}`);
+  p.push(bl?`A ${bl} ${bl} 0 0 1 ${x} ${y+h-bl}`:`L ${x} ${y+h}`);
+  p.push(`L ${x} ${y+tl}`);
+  p.push(tl?`A ${tl} ${tl} 0 0 1 ${x+tl} ${y}`:`L ${x} ${y}`);
+  p.push('Z');
+  return p.join(' ');
+}
+function pixelsToSVGElems(m, grid, n, s, ox, oy, r, defFill){
+  const elems=[];
+  for(let y=0;y<n;y++) for(let x=0;x<n;x++){
+    if(!m[y][x]) continue;
+    const fill=grid[y][x]||defFill;
+    const px=ox+x*s, py=oy+y*s;
+    if(r>0){
+      const tE=y===0||!m[y-1][x], bE=y===n-1||!m[y+1][x];
+      const lE=x===0||!m[y][x-1], rE=x===n-1||!m[y][x+1];
+      const dTL=y>0&&x>0&&m[y-1][x-1], dTR=y>0&&x<n-1&&m[y-1][x+1];
+      const dBL=y<n-1&&x>0&&m[y+1][x-1], dBR=y<n-1&&x<n-1&&m[y+1][x+1];
+      const tl=(tE&&lE&&!dTL)?r:0, tr=(tE&&rE&&!dTR)?r:0;
+      const br=(bE&&rE&&!dBR)?r:0, bl=(bE&&lE&&!dBL)?r:0;
+      elems.push(`<path d="${svgRoundRect(px,py,s,s,tl,tr,br,bl)}" fill="${fill}"/>`);
+    } else {
+      elems.push(`<rect x="${px}" y="${py}" width="${s}" height="${s}" fill="${fill}"/>`);
+    }
+  }
+  return elems;
+}
+function patternToSVG(p, state){
+  const {n, pscale:s, outerRound, bg}=state;
+  const PAD=2, r=outerRound?Math.round(s*0.28):0;
+  const W=(n+PAD*2)*s, H=(n+PAD*2)*s;
+  const bgC=bg==='black'?'#000000':'#ffffff';
+  const defFill=bg==='black'?'#ffffff':'#000000';
+  const elems=pixelsToSVGElems(p.m,p.grid,n,s,PAD*s,PAD*s,r,defFill);
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><rect width="${W}" height="${H}" fill="${bgC}"/>${elems.join('')}</svg>`;
+}
+function canvasToSVG(state){
+  const {cw,ch,bg,n,pscale:s,spacing,offsetX,offsetY,cols,outerRound,patterns}=state;
+  const stride=n*s+spacing, r=outerRound?Math.round(s*0.28):0;
+  const bgC=bg==='black'?'#000000':'#ffffff';
+  const defFill=bg==='black'?'#ffffff':'#000000';
+  const elems=[];
+  patterns.forEach((p,idx)=>{
+    const col=idx%cols, row=Math.floor(idx/cols);
+    const bx=offsetX+col*stride, by=offsetY+row*stride;
+    elems.push(...pixelsToSVGElems(p.m,p.grid,n,s,bx,by,r,defFill));
+  });
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${cw}" height="${ch}" viewBox="0 0 ${cw} ${ch}"><rect width="${cw}" height="${ch}" fill="${bgC}"/>${elems.join('')}</svg>`;
+}
+function getFormat(){ return getVal('savefmt')||'png'; }
+async function saveCanvas(){
+  if(!state) return;
+  const fmt=getFormat();
+  if(fmt==='svg'){
+    if(!dirHandle){const ok=await linkFolder();if(!ok)return}
+    const svg=canvasToSVG(state);
+    const blob=new Blob([svg],{type:'image/svg+xml'});
+    const name=basename()+'.svg';
+    try{
+      const fh=await dirHandle.getFileHandle(name,{create:true});
+      const w=await fh.createWritable();await w.write(blob);await w.close();
+      setStatus(`saved → ${name}`,'ok');
+    } catch(e){setStatus(`save failed: ${e.message}`,'err')}
+  } else { await savePng(); }
+}
+function downloadCanvas(){
+  const fmt=getFormat();
+  if(fmt==='svg'){
+    if(!state) return;
+    const svg=canvasToSVG(state);
+    const blob=new Blob([svg],{type:'image/svg+xml'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download=basename()+'.svg';
+    a.click(); URL.revokeObjectURL(a.href);
+    setStatus('downloaded → '+a.download,'ok');
+  } else { downloadPng(); }
 }
 
 function downloadPng(){
@@ -1237,9 +1342,15 @@ document.getElementById('autoplay').addEventListener('click',toggleAutoplay);
 document.getElementById('fullscreen').addEventListener('click',toggleFullscreen);
 document.getElementById('fsAutoplay').addEventListener('click',toggleAutoplay);
 document.getElementById('fsExit').addEventListener('click',toggleFullscreen);
-document.getElementById('save').addEventListener('click',savePng);
+document.getElementById('save').addEventListener('click',saveCanvas);
 document.getElementById('savejson').addEventListener('click',saveJson);
-document.getElementById('download').addEventListener('click',downloadPng);
+document.getElementById('download').addEventListener('click',downloadCanvas);
+document.getElementById('savefmt').addEventListener('click',e=>{
+  if(e.target.tagName!=='BUTTON') return;
+  const fmt=e.target.dataset.v;
+  document.getElementById('save').textContent=fmt==='svg'?'save svg → folder':'save png → folder';
+  document.getElementById('download').textContent=fmt==='svg'?'download svg':'download png (fallback)';
+});
 document.getElementById('enumrestart').addEventListener('click',()=>{
   enumCursor=0; enumKey='';
   if(getVal('enum')==='0') setSeg('enum','1');
@@ -1406,7 +1517,7 @@ document.addEventListener('keydown',e=>{
   else if(e.key==='Escape' && cssOnlyFS){
     exitCSSFullscreen();
   }
-  else if((e.metaKey||e.ctrlKey)&&e.key==='s'){e.preventDefault();savePng()}
+  else if((e.metaKey||e.ctrlKey)&&e.key==='s'){e.preventDefault();saveCanvas()}
 });
 window.addEventListener('resize', fitCanvas);
 window.addEventListener('load', fitCanvas);
