@@ -99,6 +99,12 @@ kbd{background:#1a1a1a;border:1px solid #2a2a2a;padding:1px 5px;font-size:9px;bo
 .drop-zone .drop-info{flex:1;text-align:left;font-size:9px;color:#888;letter-spacing:.04em}
 .drop-zone .drop-clear{background:transparent;border:1px solid #2a2a2a;color:#888;padding:3px 8px;font-family:inherit;font-size:10px;cursor:pointer;flex:none}
 .drop-zone .drop-clear:hover{color:#fff;background:#1a1a1a}
+.color-picker-row{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap}
+.color-picker-row input[type=color]{-webkit-appearance:none;appearance:none;width:26px;height:26px;border:1px solid #333;padding:0;background:transparent;cursor:pointer;flex:0 0 auto}
+.color-picker-row input[type=color]::-webkit-color-swatch-wrapper{padding:0}
+.color-picker-row input[type=color]::-webkit-color-swatch{border:0}
+.color-picker-row input[type=color]::-moz-color-swatch{border:0}
+.color-picker-row input[type=color]:hover{border-color:#06ffa5}
 canvas{cursor:pointer}
 .save-flash{position:absolute;border:2px solid #06ffa5;box-shadow:0 0 16px rgba(6,255,165,.7), inset 0 0 12px rgba(6,255,165,.5);box-sizing:border-box;pointer-events:none;z-index:5;animation:saveflash .55s ease-out forwards}
 @keyframes saveflash{0%{opacity:0;transform:scale(1)}30%{opacity:1;transform:scale(1.1)}100%{opacity:0;transform:scale(1.02)}}
@@ -185,17 +191,7 @@ body.fs{overflow:hidden!important;position:fixed;width:100%;height:100%}
 
     <div class="group">
       <div class="group-label">pattern</div>
-      <div class="row"><label>size</label>
-        <div class="seg" id="psize" data-val="5" style="flex:1.6">
-          <button data-v="3">3</button>
-          <button data-v="4">4</button>
-          <button data-v="5" class="on">5</button>
-          <button data-v="6">6</button>
-          <button data-v="7">7</button>
-          <button data-v="8">8</button>
-          <button data-v="9">9</button>
-        </div>
-      </div>
+      <div class="row"><label>size</label><input type="range" id="psize_r" min="3" max="20" value="5" step="1"><input type="number" id="psize" value="5" min="3" max="20" style="width:52px"></div>
       <div class="row"><label>pixel scale</label><input type="range" id="pscale_r" min="2" max="60" value="10" step="1"><input type="number" id="pscale" value="10" min="2" max="60" style="width:52px"></div>
       <div class="row"><label>spacing</label><input type="range" id="spacing_r" min="0" max="100" value="6" step="1"><input type="number" id="spacing" value="6" min="0" max="100" style="width:52px"></div>
     </div>
@@ -233,10 +229,21 @@ body.fs{overflow:hidden!important;position:fixed;width:100%;height:100%}
         <button data-v="crt">crt green</button>
         <button data-v="warm">warm earth</button>
         <button data-v="image" class="full-span">image · from drop ↓</button>
+        <button data-v="custom" class="full-span">custom · pick below ↓</button>
       </div>
       <div id="imgdrop" class="drop-zone">
         <span>drop image · or click to pick</span>
         <input type="file" accept="image/*" hidden>
+      </div>
+      <div id="customColors" class="color-picker-row">
+        <input type="color" value="#ff006e" data-idx="0">
+        <input type="color" value="#fb5607" data-idx="1">
+        <input type="color" value="#ffbe0b" data-idx="2">
+        <input type="color" value="#8338ec" data-idx="3">
+        <input type="color" value="#3a86ff" data-idx="4">
+        <input type="color" value="#06ffa5" data-idx="5">
+        <input type="color" value="#ff14c6" data-idx="6">
+        <input type="color" value="#ffffff" data-idx="7">
       </div>
       <div class="row" style="margin-top:8px"><label>colors / symbol</label>
         <div class="seg" id="mcol" data-val="2" style="flex:1.6">
@@ -382,9 +389,11 @@ const PALETTES = {
   warm:   ['#d4a373','#e9c46a','#f4a261','#e76f51','#bc6c25','#dda15e','#606c38'],
 };
 function randHSL(){const h=RI(360),s=60+RI(35),l=52+RI(35);return`hsl(${h} ${s}% ${l}%)`}
+let customPalette = ['#ff006e','#fb5607','#ffbe0b','#8338ec','#3a86ff','#06ffa5','#ff14c6','#ffffff'];
 function getPalette(mode,bg){
   if(mode==='mono') return [bg==='black'?'#ffffff':'#000000'];
   if(mode==='random'||mode==='chaos'||mode==='grays'||mode==='image') return null;
+  if(mode==='custom') return customPalette.slice();
   return PALETTES[mode];
 }
 let imagePalette = null;
@@ -690,7 +699,7 @@ function generate(){
   }
   const margin=getNum('margin');
   const bg=getVal('bg');
-  const n=+getVal('psize'),pscale=getNum('pscale'),spacing=getNum('spacing');
+  const n=getNum('psize'),pscale=getNum('pscale'),spacing=getNum('spacing');
   const mode=getVal('mode');
   const fill=getNum('fill');
   const paletteMode=getVal('palette');
@@ -814,9 +823,9 @@ function generateWild(){
   // bg biased black
   setSeg('bg', p(['black','black','black','white']));
 
-  // pattern size: any integer from 3 to 9, slight bias to 5
-  const pSize = p([3,4,5,5,5,6,7,7,8,9]);
-  setSeg('psize', pSize);
+  // pattern size: integer 3–20, biased toward 5–9 so wild mode mostly stays readable
+  const pSize = p([3,4,5,5,5,6,7,7,8,9,10,11,13,16,20]);
+  setNum('psize', pSize);
   const pScale = 4 + ri(18);
   setNum('pscale', pScale);
   const block = pSize * pScale;
@@ -989,10 +998,12 @@ function _drawBilinearBlend(ctx, M, G, n, z, x0, y0, outer, lattice, clips){
     if(!M[y][x]) continue;
     const px = x0+x*z, py = y0+y*z;
     const rect = _cellRect(clips, y, x, px, py, z);
-    // outer rounding only when cell is at full size (no growRect override)
-    if(outer && rect.w===z && rect.h===z && rect.px===px && rect.py===py){
+    // Final rounding is computed for the FULL-size cell; Canvas auto-clamps
+    // the radii to half the current rect dimensions, so a thin growing strip
+    // becomes a half-sphere, thickening into the full rounded rect at t=1.
+    if(outer){
       const [tl,tr,br,bl] = _cornerRadii(M,n,x,y,z);
-      ctx.roundRect(px, py, z, z, [tl,tr,br,bl]);
+      ctx.roundRect(rect.px, rect.py, rect.w, rect.h, [tl,tr,br,bl]);
     } else {
       ctx.rect(rect.px, rect.py, rect.w, rect.h);
     }
@@ -1008,6 +1019,15 @@ function drawPatternToCtx(ctx, M, G, n, z, x0, y0, opts){
   const inner = opts && opts.inner;
   const gradient = opts && opts.gradient;
   const clips = opts && opts.clips;
+  const presence = opts && opts.presence;
+  // per-cell presence: 1 for stable cells, anim progress (0..1) for newborns,
+  // 1-progress for dying. Shared fillets scale with the minimum presence of
+  // their two adjacent cells so "inner corners grow with the cell body".
+  const cellPresence = (y, x) => {
+    if(!presence) return 1;
+    const p = presence[y] && presence[y][x];
+    return (p === undefined) ? 1 : p;
+  };
   // lattice shared between bilinear blend AND inner-fillet colouring
   const lattice = gradient ? _computeLattice(M, G, n) : null;
   if(gradient){
@@ -1019,10 +1039,10 @@ function drawPatternToCtx(ctx, M, G, n, z, x0, y0, opts){
       const px = x0 + x*z, py = y0 + y*z;
       const rect = _cellRect(clips, y, x, px, py, z);
       ctx.fillStyle = toHexColor(col);
-      if(outer && rect.w===z && rect.h===z && rect.px===px && rect.py===py){
+      if(outer){
         const [tl,tr,br,bl]=_cornerRadii(M,n,x,y,z);
         ctx.beginPath();
-        ctx.roundRect(px, py, z, z, [tl, tr, br, bl]);
+        ctx.roundRect(rect.px, rect.py, rect.w, rect.h, [tl, tr, br, bl]);
         ctx.fill();
       } else {
         ctx.fillRect(rect.px, rect.py, rect.w, rect.h);
@@ -1040,17 +1060,28 @@ function drawPatternToCtx(ctx, M, G, n, z, x0, y0, opts){
       }
       return fa || fb;
     };
+    const filRad = (ay, ax, by, bx) =>
+      r * Math.min(cellPresence(ay, ax), cellPresence(by, bx));
     for(let y=0;y<n;y++) for(let x=0;x<n;x++){
       if(M[y][x]) continue;
       const px = x0 + x*z, py = y0 + y*z;
-      if(y>0 && x>0     && M[y-1][x] && M[y][x-1])
-        filletTL(ctx, px, py, r,    cornerCol(y,   x,   G[y-1][x], G[y][x-1]));
-      if(y>0 && x<n-1   && M[y-1][x] && M[y][x+1])
-        filletTR(ctx, px, py, z, r, cornerCol(y,   x+1, G[y-1][x], G[y][x+1]));
-      if(y<n-1 && x>0   && M[y+1][x] && M[y][x-1])
-        filletBL(ctx, px, py, z, r, cornerCol(y+1, x,   G[y+1][x], G[y][x-1]));
-      if(y<n-1 && x<n-1 && M[y+1][x] && M[y][x+1])
-        filletBR(ctx, px, py, z, r, cornerCol(y+1, x+1, G[y+1][x], G[y][x+1]));
+      let rr;
+      if(y>0 && x>0 && M[y-1][x] && M[y][x-1]){
+        rr = filRad(y-1, x, y, x-1);
+        if(rr > 0.25) filletTL(ctx, px, py, rr,    cornerCol(y,   x,   G[y-1][x], G[y][x-1]));
+      }
+      if(y>0 && x<n-1 && M[y-1][x] && M[y][x+1]){
+        rr = filRad(y-1, x, y, x+1);
+        if(rr > 0.25) filletTR(ctx, px, py, z, rr, cornerCol(y,   x+1, G[y-1][x], G[y][x+1]));
+      }
+      if(y<n-1 && x>0 && M[y+1][x] && M[y][x-1]){
+        rr = filRad(y+1, x, y, x-1);
+        if(rr > 0.25) filletBL(ctx, px, py, z, rr, cornerCol(y+1, x,   G[y+1][x], G[y][x-1]));
+      }
+      if(y<n-1 && x<n-1 && M[y+1][x] && M[y][x+1]){
+        rr = filRad(y+1, x, y, x+1);
+        if(rr > 0.25) filletBR(ctx, px, py, z, rr, cornerCol(y+1, x+1, G[y+1][x], G[y][x+1]));
+      }
     }
   }
 }
@@ -1074,14 +1105,20 @@ function _buildAnimFrame(p, n, z, x0, y0, t){
   const M = p.m.map(r=>r.slice());
   const G = p.grid.map(r=>r.slice());
   const clips = {};
+  const presence = {};
   const putClip = (y, x, rect) => {
     if(!clips[y]) clips[y] = {};
     clips[y][x] = rect;
+  };
+  const putPres = (y, x, v) => {
+    if(!presence[y]) presence[y] = {};
+    presence[y][x] = v;
   };
   if(p.anim && p.anim.spawn){
     for(const s of p.anim.spawn){
       const px = x0 + s.x*z, py = y0 + s.y*z;
       putClip(s.y, s.x, _growRect(px, py, z, t, s.anchor));
+      putPres(s.y, s.x, t);
     }
   }
   if(p.anim && p.anim.die){
@@ -1090,9 +1127,10 @@ function _buildAnimFrame(p, n, z, x0, y0, t){
       G[d.y][d.x] = d.color;
       const px = x0 + d.x*z, py = y0 + d.y*z;
       putClip(d.y, d.x, _growRect(px, py, z, 1-t, d.anchor));
+      putPres(d.y, d.x, 1-t);
     }
   }
-  return { M, G, clips };
+  return { M, G, clips, presence };
 }
 
 function render(t){
@@ -1111,7 +1149,7 @@ function render(t){
     if(animActive && p.anim){
       const frame = _buildAnimFrame(p, s.n, s.pscale, x0, y0, t);
       drawPatternToCtx(ctx, frame.M, frame.G, s.n, s.pscale, x0, y0,
-                       Object.assign({}, baseOpts, { clips: frame.clips }));
+                       Object.assign({}, baseOpts, { clips: frame.clips, presence: frame.presence }));
     } else {
       drawPatternToCtx(ctx, p.m, p.grid, s.n, s.pscale, x0, y0, baseOpts);
     }
@@ -1276,6 +1314,13 @@ function svgRoundRect(x,y,w,h,tl,tr,br,bl){
 }
 function toHexColor(c){
   if(!c||c[0]==='#') return c;
+  // rgb(r,g,b) / rgba(r,g,b,a) — image palette stores samples in this form,
+  // so bilinear blend must parse them (otherwise hex.slice returns NaN → black)
+  const mr=c.match(/rgba?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)/i);
+  if(mr){
+    const hx=v=>('0'+Math.max(0,Math.min(255,Math.round(parseFloat(v)))).toString(16)).slice(-2);
+    return'#'+hx(mr[1])+hx(mr[2])+hx(mr[3]);
+  }
   const m=c.match(/hsl\(\s*([\d.]+)[,\s]\s*([\d.]+)%[,\s]\s*([\d.]+)%/i);
   if(!m) return c;
   let h=parseFloat(m[1])/360, s=parseFloat(m[2])/100, l=parseFloat(m[3])/100;
@@ -1308,19 +1353,49 @@ function pixelsToSVGElems(m, grid, n, s, ox, oy, r, defFill){
   }
   return elems;
 }
+// Render the existing canvas pipeline into an offscreen 2D context and embed
+// as a base64 <image> inside SVG. SVG 1.1 has no bilinear mesh gradient, so
+// when blend is on we fall back to a raster image inside the SVG — preserves
+// visual fidelity at the cost of scalability.
+function _rasterSVG(renderCb, W, H, bgC){
+  const out = document.createElement('canvas');
+  out.width = W; out.height = H;
+  const ctx = out.getContext('2d');
+  ctx.fillStyle = bgC;
+  ctx.fillRect(0, 0, W, H);
+  renderCb(ctx);
+  const href = out.toDataURL('image/png');
+  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><image width="${W}" height="${H}" xlink:href="${href}"/></svg>`;
+}
 function patternToSVG(p, state){
-  const {n, pscale:s, outerRound, bg}=state;
-  const PAD=2, r=outerRound?Math.round(s*0.28):0;
+  const {n, pscale:s, outerRound, innerRound, gradBlend, bg}=state;
+  // half-cell rounding matches the canvas _cornerRadii logic (was s*0.28,
+  // which made isolated cells read as rounded squares instead of circles)
+  const PAD=2, r=outerRound?Math.round(s/2):0;
   const W=(n+PAD*2)*s, H=(n+PAD*2)*s;
   const bgC=bg==='black'?'#000000':'#ffffff';
+  if(gradBlend){
+    return _rasterSVG(ctx => drawPatternToCtx(ctx, p.m, p.grid, n, s, PAD*s, PAD*s,
+      {outer:outerRound, inner:innerRound, gradient:true}), W, H, bgC);
+  }
   const defFill=bg==='black'?'#ffffff':'#000000';
   const elems=pixelsToSVGElems(p.m,p.grid,n,s,PAD*s,PAD*s,r,defFill);
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><rect width="${W}" height="${H}" fill="${bgC}"/>${elems.join('')}</svg>`;
 }
 function canvasToSVG(state){
-  const {cw,ch,bg,n,pscale:s,spacing,offsetX,offsetY,cols,outerRound,patterns}=state;
-  const stride=n*s+spacing, r=outerRound?Math.round(s*0.28):0;
+  const {cw,ch,bg,n,pscale:s,spacing,offsetX,offsetY,cols,outerRound,innerRound,gradBlend,patterns}=state;
+  const stride=n*s+spacing, r=outerRound?Math.round(s/2):0;
   const bgC=bg==='black'?'#000000':'#ffffff';
+  if(gradBlend){
+    return _rasterSVG(ctx => {
+      patterns.forEach((p,idx)=>{
+        const col=idx%cols, row=Math.floor(idx/cols);
+        const bx=offsetX+col*stride, by=offsetY+row*stride;
+        drawPatternToCtx(ctx, p.m, p.grid, n, s, bx, by,
+          {outer:outerRound, inner:innerRound, gradient:true});
+      });
+    }, cw, ch, bgC);
+  }
   const defFill=bg==='black'?'#ffffff':'#000000';
   const elems=[];
   patterns.forEach((p,idx)=>{
@@ -1575,7 +1650,7 @@ document.querySelectorAll('.seg').forEach(seg=>{
       seg.querySelectorAll('button').forEach(b=>b.classList.remove('on'));
       btn.classList.add('on');
       seg.dataset.val=btn.dataset.v;
-      if(seg.id==='enum' || seg.id==='mode' || seg.id==='psize'){
+      if(seg.id==='enum' || seg.id==='mode'){
         enumCursor=0; enumKey='';
         updateEnumUI();
       }
@@ -1585,6 +1660,18 @@ document.querySelectorAll('.seg').forEach(seg=>{
 document.getElementById('fill').addEventListener('input',e=>{
   document.getElementById('fillv').textContent=e.target.value;
 });
+// psize slider ↔ number (live). Changing grid size invalidates enum sweep.
+;(()=>{
+  const sl=document.getElementById('psize_r'), num=document.getElementById('psize');
+  const sync = (from, to) => {
+    to.value = from.value;
+    enumCursor = 0; enumKey = '';
+    updateEnumUI();
+    generate();
+  };
+  sl.addEventListener('input', ()=>sync(sl, num));
+  num.addEventListener('change', ()=>sync(num, sl));
+})();
 // pscale slider ↔ number (live)
 ;(()=>{
   const sl=document.getElementById('pscale_r'), num=document.getElementById('pscale');
@@ -1766,6 +1853,29 @@ function clearImagePalette(){
       }
     });
   }
+})();
+
+// custom palette: 8 colour pickers. Editing any swatch (a) updates
+// customPalette, (b) auto-selects "custom" palette mode if not already, and
+// (c) regenerates. `input` fires on every cursor move → throttle with rAF.
+(function wireCustomPalette(){
+  const row = document.getElementById('customColors');
+  if(!row) return;
+  let pending = false;
+  const apply = () => {
+    pending = false;
+    row.querySelectorAll('input[type=color]').forEach(inp=>{
+      const i = +inp.dataset.idx;
+      customPalette[i] = inp.value;
+    });
+    if(getVal('palette') !== 'custom') setSeg('palette', 'custom');
+    generate();
+  };
+  row.addEventListener('input', ()=>{
+    if(pending) return;
+    pending = true;
+    requestAnimationFrame(apply);
+  });
 })();
 
 updateEnumUI();
