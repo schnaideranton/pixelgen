@@ -110,21 +110,7 @@ body.fs .app{display:block;height:100vh;width:100vw}
 body.fs .stage{width:100vw;height:100vh;display:block}
 body.fs .canvas-wrap{padding:0;max-height:none;min-height:100vh;height:100vh;width:100vw}
 
-/* ==== visual effects (GPU-composited, free to switch) ====
-   canvas bitmap is transparent; bg lives on .canvas-holder.
-   filter on canvas affects only drawn pixels (per-cluster glow etc);
-   transform / overlays on .canvas-holder so bg tilts / receives scanlines. */
-canvas{transition:filter .2s ease-out}
 .canvas-wrap{position:relative}
-body[data-fx="glow"] canvas{filter:drop-shadow(0 0 6px rgba(255,255,255,.75)) drop-shadow(0 0 18px rgba(255,255,255,.35))}
-body[data-fx="bloom"] canvas{filter:saturate(1.4) drop-shadow(0 0 10px rgba(255,255,255,.8)) drop-shadow(0 0 28px rgba(255,255,255,.4))}
-body[data-fx="split"] canvas{filter:drop-shadow(2px 0 0 rgba(255,30,100,.85)) drop-shadow(-2px 0 0 rgba(30,200,255,.85))}
-body[data-fx="crt"] canvas{filter:saturate(1.55) contrast(1.12) blur(.4px) drop-shadow(0 0 3px rgba(255,255,255,.35))}
-body[data-fx="crt"] .canvas-holder::after{opacity:1;background:repeating-linear-gradient(to bottom,rgba(0,0,0,.32) 0 1px,transparent 1px 3px)}
-body[data-fx="glass"] canvas{filter:contrast(1.08) brightness(1.06) blur(.4px)}
-body[data-fx="glass"] .canvas-holder::after{opacity:1;background:linear-gradient(135deg,rgba(255,255,255,.14) 0%,rgba(255,255,255,0) 45%,rgba(0,0,0,.14) 100%)}
-body[data-fx="3d"] .canvas-holder{transform:perspective(1200px) rotateX(-8deg) rotateY(9deg);box-shadow:0 0 0 1px #2a2a2a, 0 40px 90px rgba(0,0,0,.75)}
-body[data-fx="noir"] canvas{filter:grayscale(1) contrast(1.3) brightness(1.05)}
 
 /* ==== mobile-first responsive: canvas locked to a top square, everything
    else scrolls below ==== */
@@ -261,18 +247,8 @@ body[data-fx="noir"] canvas{filter:grayscale(1) contrast(1.3) brightness(1.05)}
     </div>
 
     <div class="group">
-      <div class="group-label">effects</div>
-      <div class="seg grid2" id="fx" data-val="none">
-        <button data-v="none" class="on">none</button>
-        <button data-v="glow">glow</button>
-        <button data-v="bloom">bloom</button>
-        <button data-v="split">split · rgb</button>
-        <button data-v="crt">crt</button>
-        <button data-v="glass">glass</button>
-        <button data-v="3d">3d tilt</button>
-        <button data-v="noir">noir</button>
-      </div>
-      <div class="row" style="margin-top:6px"><label>outer round</label>
+      <div class="group-label">rounding</div>
+      <div class="row"><label>outer round</label>
         <div class="seg" id="outer" data-val="0" style="flex:1.2">
           <button data-v="0" class="on">off</button>
           <button data-v="1">on</button>
@@ -962,7 +938,7 @@ function fitCanvas(){
 let dirHandle=null;
 async function linkFolder(){
   if(!window.showDirectoryPicker){
-    setStatus('file-system api unavailable · use "download png" or open via local server','err');
+    setStatus('Попробуй открыть на десктопе в браузере Chrome, чтобы это работало.','err');
     return false;
   }
   try{
@@ -1269,11 +1245,6 @@ document.getElementById('enumslider').addEventListener('input', ()=>{
     generate();
   });
 });
-
-document.getElementById('fx').addEventListener('click', e=>{
-  if(e.target.tagName==='BUTTON') document.body.dataset.fx = e.target.dataset.v;
-});
-document.body.dataset.fx = getVal('fx');
 
 // click on a pattern in the canvas → save that single symbol as PNG
 document.getElementById('cv').addEventListener('click', e=>{
