@@ -381,7 +381,7 @@ const PALETTES = {
   crt:    ['#00ff41','#70ff80','#008f11','#b6ffb6','#c5fcbe'],
   warm:   ['#d4a373','#e9c46a','#f4a261','#e76f51','#bc6c25','#dda15e','#606c38'],
 };
-function randHSL(){const h=RI(360),s=55+RI(40),l=45+RI(35);return`hsl(${h} ${s}% ${l}%)`}
+function randHSL(){const h=RI(360),s=60+RI(35),l=52+RI(35);return`hsl(${h} ${s}% ${l}%)`}
 function getPalette(mode,bg){
   if(mode==='mono') return [bg==='black'?'#ffffff':'#000000'];
   if(mode==='random'||mode==='chaos'||mode==='grays'||mode==='image') return null;
@@ -536,7 +536,10 @@ function colorize(m,palette,maxColors,bg,paletteMode){
   // chaos mode: every active cell gets its own hue, no clustering
   if(paletteMode==='chaos'){
     for(let y=0;y<n;y++)for(let x=0;x<n;x++){
-      if(m[y][x]) g[y][x]=randHSL();
+      if(m[y][x]){
+        const h=RI(360),s=65+RI(30),l=55+RI(35);
+        g[y][x]=`hsl(${h} ${s}% ${l}%)`;
+      }
     }
     return g;
   }
@@ -550,12 +553,15 @@ function colorize(m,palette,maxColors,bg,paletteMode){
     return g;
   }
   // grays mode: per-pixel random gray shade, kept contrasting against bg
+  // Use hex directly to guarantee correct canvas rendering across all browsers
   if(paletteMode==='grays'){
-    const lmin = bg==='black' ? 42 : 0;
     for(let y=0;y<n;y++)for(let x=0;x<n;x++){
       if(m[y][x]){
-        const l = lmin + RI(58);
-        g[y][x]=`hsl(0 0% ${l}%)`;
+        // black bg: light grays 55–99%; white bg: dark grays 2–52%
+        const l = bg==='black' ? (55 + RI(45)) : (2 + RI(51));
+        const v = Math.round(l / 100 * 255);
+        const hx = v.toString(16).padStart(2,'0');
+        g[y][x] = `#${hx}${hx}${hx}`;
       }
     }
     return g;
@@ -902,8 +908,13 @@ function _gradientPair(ctx,M,G,n,z,x0,y0,x,y,dx,dy,outer){
   if(cA===cB) return;
   const px_A=x0+x*z, py_A=y0+y*z;
   const px_B=x0+nx*z, py_B=y0+ny*z;
-  // gradient from center of A to center of B
-  const grd=ctx.createLinearGradient(px_A+z/2,py_A+z/2,px_B+z/2,py_B+z/2);
+  // gradient from outer edge of A to outer edge of B — spans full 2-pixel width
+  // for horizontal pair: left edge of A → right edge of B (centered vertically)
+  // for vertical pair:   top edge of A → bottom edge of B (centered horizontally)
+  const grd=ctx.createLinearGradient(
+    px_A + (dx?0:z/2), py_A + (dy?0:z/2),
+    px_B + (dx?z:z/2), py_B + (dy?z:z/2)
+  );
   grd.addColorStop(0,cA); grd.addColorStop(1,cB);
   ctx.save();
   ctx.beginPath();
@@ -1249,12 +1260,14 @@ function getOrbit(fdMode, n, y, x){
 function morphPick(paletteMode, palette, bg, neighbour){
   if(neighbour) return neighbour;
   if(paletteMode==='chaos'){
-    const h=Math.floor(Math.random()*360), s=55+Math.floor(Math.random()*40), l=45+Math.floor(Math.random()*35);
+    const h=Math.floor(Math.random()*360), s=65+Math.floor(Math.random()*30), l=55+Math.floor(Math.random()*35);
     return `hsl(${h} ${s}% ${l}%)`;
   }
   if(paletteMode==='grays'){
-    const lmin = bg==='black'?42:0;
-    return `hsl(0 0% ${lmin+Math.floor(Math.random()*58)}%)`;
+    const l = bg==='black' ? (55+Math.floor(Math.random()*45)) : (2+Math.floor(Math.random()*51));
+    const v = Math.round(l/100*255);
+    const hx = v.toString(16).padStart(2,'0');
+    return `#${hx}${hx}${hx}`;
   }
   if(paletteMode==='image' && imagePalette && imagePalette.length){
     return imagePalette[Math.floor(Math.random()*imagePalette.length)];
