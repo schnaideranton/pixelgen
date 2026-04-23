@@ -196,8 +196,8 @@ body.fs{overflow:hidden!important;position:fixed;width:100%;height:100%}
           <button data-v="9">9</button>
         </div>
       </div>
-      <div class="row"><label>pixel scale</label><input type="number" id="pscale" value="10" min="2" max="40"></div>
-      <div class="row"><label>spacing</label><input type="number" id="spacing" value="6" min="0"></div>
+      <div class="row"><label>pixel scale</label><input type="range" id="pscale_r" min="2" max="60" value="10" step="1"><input type="number" id="pscale" value="10" min="2" max="60" style="width:52px"></div>
+      <div class="row"><label>spacing</label><input type="range" id="spacing_r" min="0" max="100" value="6" step="1"><input type="number" id="spacing" value="6" min="0" max="100" style="width:52px"></div>
     </div>
 
     <div class="group">
@@ -658,7 +658,11 @@ function setSeg(id, val){
     b.classList.toggle('on', b.dataset.v===String(val));
   });
 }
-function setNum(id, val){ document.getElementById(id).value = val; }
+function setNum(id, val){
+  document.getElementById(id).value = val;
+  const r = document.getElementById(id+'_r');
+  if(r) r.value = val;
+}
 
 function generate(){
   let cw, ch;
@@ -1350,6 +1354,18 @@ document.querySelectorAll('.seg').forEach(seg=>{
 document.getElementById('fill').addEventListener('input',e=>{
   document.getElementById('fillv').textContent=e.target.value;
 });
+// pscale slider ↔ number (live)
+;(()=>{
+  const sl=document.getElementById('pscale_r'), num=document.getElementById('pscale');
+  sl.addEventListener('input',()=>{ num.value=sl.value; generate(); });
+  num.addEventListener('change',()=>{ sl.value=num.value; generate(); });
+})();
+// spacing slider ↔ number (live)
+;(()=>{
+  const sl=document.getElementById('spacing_r'), num=document.getElementById('spacing');
+  sl.addEventListener('input',()=>{ num.value=sl.value; generate(); });
+  num.addEventListener('change',()=>{ sl.value=num.value; generate(); });
+})();
 document.getElementById('gen').addEventListener('click',generate);
 document.getElementById('genwild').addEventListener('click',generateWild);
 document.getElementById('autoplay').addEventListener('click',toggleAutoplay);
