@@ -901,15 +901,11 @@ function _cornerRadii(M,n,x,y,z){
   const dBL=y<n-1&&x>0&&M[y+1][x-1], dBR=y<n-1&&x<n-1&&M[y+1][x+1];
   return[(tE&&lE&&!dTL)?r:0,(tE&&rE&&!dTR)?r:0,(bE&&rE&&!dBR)?r:0,(bE&&lE&&!dBL)?r:0];
 }
-// Bilinear blend:
-// Every lattice corner (n+1)×(n+1) gets a colour = average of the 4 surrounding
-// active cells.  Because neighbouring cells SHARE each corner, their colours are
-// mathematically identical on the boundary → seamless C0 continuity, no pixel grid.
-// Inside every active cell the colour is bilinearly interpolated from its 4 corners
-// and written into an ImageData buffer, then blitted onto the main canvas with an
-// (optional) outer-round clip path.
-function _drawBilinearBlend(ctx, M, G, n, z, x0, y0, outer){
-  // 1) parse active cells to RGB triples
+// Lattice of corner colours. Every (n+1)×(n+1) lattice point gets a colour =
+// mean of the 4 surrounding active cells. Neighbouring cells SHARE each corner,
+// so corner colours are identical on both sides → C0 continuity for bilinear
+// blend AND for inner-fillet colouring.
+function _computeLattice(M, G, n){
   const rgb = new Array(n);
   for(let y=0;y<n;y++){
     rgb[y] = new Array(n);
@@ -924,7 +920,6 @@ function _drawBilinearBlend(ctx, M, G, n, z, x0, y0, outer){
       } else rgb[y][x] = null;
     }
   }
-  // 2) (n+1)×(n+1) corner colours = mean of surrounding active cells
   const corners = new Array(n+1);
   for(let cy=0; cy<=n; cy++){
     corners[cy] = new Array(n+1);
@@ -939,7 +934,27 @@ function _drawBilinearBlend(ctx, M, G, n, z, x0, y0, outer){
       corners[cy][cx] = k ? [r/k, g/k, b/k] : null;
     }
   }
-  // 3) build ImageData, bilinearly interpolate each active cell
+  return { rgb, corners };
+}
+function _rgbToHex(v){
+  const c = i => {
+    const n = Math.max(0, Math.min(255, Math.round(v[i])));
+    return ('0' + n.toString(16)).slice(-2);
+  };
+  return '#' + c(0) + c(1) + c(2);
+}
+// Per-cell clip rect used by morph animation: {px,py,w,h} or undefined = full.
+function _cellRect(clips, y, x, px, py, z){
+  const c = clips && clips[y] && clips[y][x];
+  if(c) return c;
+  return { px, py, w: z, h: z };
+}
+// Inside every active cell the colour is bilinearly interpolated from its 4
+// corners and written into an ImageData buffer, then blitted via an offscreen
+// canvas clipped to the (optionally outer-rounded / per-cell growRect) union.
+function _drawBilinearBlend(ctx, M, G, n, z, x0, y0, outer, lattice, clips){
+  lattice = lattice || _computeLattice(M, G, n);
+  const { rgb, corners } = lattice;
   const W = n*z, H = n*z;
   const img = ctx.createImageData(W, H);
   const data = img.data;
@@ -965,7 +980,6 @@ function _drawBilinearBlend(ctx, M, G, n, z, x0, y0, outer){
       }
     }
   }
-  // 4) blit via an offscreen canvas so we can clip rounded corners on destination
   const off = document.createElement('canvas');
   off.width=W; off.height=H;
   off.getContext('2d').putImageData(img, 0, 0);
@@ -974,11 +988,13 @@ function _drawBilinearBlend(ctx, M, G, n, z, x0, y0, outer){
   for(let y=0;y<n;y++) for(let x=0;x<n;x++){
     if(!M[y][x]) continue;
     const px = x0+x*z, py = y0+y*z;
-    if(outer){
+    const rect = _cellRect(clips, y, x, px, py, z);
+    // outer rounding only when cell is at full size (no growRect override)
+    if(outer && rect.w===z && rect.h===z && rect.px===px && rect.py===py){
       const [tl,tr,br,bl] = _cornerRadii(M,n,x,y,z);
       ctx.roundRect(px, py, z, z, [tl,tr,br,bl]);
     } else {
-      ctx.rect(px, py, z, z);
+      ctx.rect(rect.px, rect.py, rect.w, rect.h);
     }
   }
   ctx.clip();
@@ -991,50 +1007,114 @@ function drawPatternToCtx(ctx, M, G, n, z, x0, y0, opts){
   const outer = opts && opts.outer;
   const inner = opts && opts.inner;
   const gradient = opts && opts.gradient;
+  const clips = opts && opts.clips;
+  // lattice shared between bilinear blend AND inner-fillet colouring
+  const lattice = gradient ? _computeLattice(M, G, n) : null;
   if(gradient){
-    // bilinear blend replaces the solid-fill pass entirely
-    _drawBilinearBlend(ctx, M, G, n, z, x0, y0, outer);
+    _drawBilinearBlend(ctx, M, G, n, z, x0, y0, outer, lattice, clips);
   } else {
-    // pass 1 — solid fills
+    // pass 1 — solid fills (with optional per-cell growRect clip)
     for(let y=0;y<n;y++) for(let x=0;x<n;x++){
       const col = G[y][x]; if(!col) continue;
       const px = x0 + x*z, py = y0 + y*z;
-      ctx.fillStyle=toHexColor(col);
-      if(outer){
+      const rect = _cellRect(clips, y, x, px, py, z);
+      ctx.fillStyle = toHexColor(col);
+      if(outer && rect.w===z && rect.h===z && rect.px===px && rect.py===py){
         const [tl,tr,br,bl]=_cornerRadii(M,n,x,y,z);
         ctx.beginPath();
         ctx.roundRect(px, py, z, z, [tl, tr, br, bl]);
         ctx.fill();
       } else {
-        ctx.fillRect(px, py, z, z);
+        ctx.fillRect(rect.px, rect.py, rect.w, rect.h);
       }
     }
   }
   if(inner){
+    // inner fillet colour lookup: prefer the lattice corner colour in blend mode
+    // so the pухлое скругление inherits colour from the same corner the two
+    // adjacent cells share. Fallback to a neighbour cell's raw colour otherwise.
+    const cornerCol = (cy, cx, fa, fb) => {
+      if(lattice){
+        const c = lattice.corners[cy] && lattice.corners[cy][cx];
+        if(c) return _rgbToHex(c);
+      }
+      return fa || fb;
+    };
     for(let y=0;y<n;y++) for(let x=0;x<n;x++){
       if(M[y][x]) continue;
       const px = x0 + x*z, py = y0 + y*z;
-      if(y>0 && x>0     && M[y-1][x] && M[y][x-1]) filletTL(ctx, px, py, r,   G[y-1][x] || G[y][x-1]);
-      if(y>0 && x<n-1   && M[y-1][x] && M[y][x+1]) filletTR(ctx, px, py, z, r, G[y-1][x] || G[y][x+1]);
-      if(y<n-1 && x>0   && M[y+1][x] && M[y][x-1]) filletBL(ctx, px, py, z, r, G[y+1][x] || G[y][x-1]);
-      if(y<n-1 && x<n-1 && M[y+1][x] && M[y][x+1]) filletBR(ctx, px, py, z, r, G[y+1][x] || G[y][x+1]);
+      if(y>0 && x>0     && M[y-1][x] && M[y][x-1])
+        filletTL(ctx, px, py, r,    cornerCol(y,   x,   G[y-1][x], G[y][x-1]));
+      if(y>0 && x<n-1   && M[y-1][x] && M[y][x+1])
+        filletTR(ctx, px, py, z, r, cornerCol(y,   x+1, G[y-1][x], G[y][x+1]));
+      if(y<n-1 && x>0   && M[y+1][x] && M[y][x-1])
+        filletBL(ctx, px, py, z, r, cornerCol(y+1, x,   G[y+1][x], G[y][x-1]));
+      if(y<n-1 && x<n-1 && M[y+1][x] && M[y][x+1])
+        filletBR(ctx, px, py, z, r, cornerCol(y+1, x+1, G[y+1][x], G[y][x+1]));
     }
   }
 }
 
-function render(){
+// Morph animation: a newborn pixel grows out from the edge shared with its
+// parent; a dying pixel shrinks back into the edge shared with a surviving
+// neighbour. _growRect returns the visible sub-rect at progress s∈[0,1].
+function _growRect(px, py, z, s, anchor){
+  s = Math.max(0, Math.min(1, s));
+  if(anchor==='top')    return { px,              py,              w: z,   h: z*s };
+  if(anchor==='bottom') return { px,              py: py+z*(1-s), w: z,   h: z*s };
+  if(anchor==='left')   return { px,              py,              w: z*s, h: z   };
+  if(anchor==='right')  return { px: px+z*(1-s), py,              w: z*s, h: z   };
+  return { px, py, w: z, h: z };
+}
+// Build display M/G/clips for one pattern at animation progress t∈[0,1].
+// Dying cells are re-enabled (so bilinear lattice & solid pass still draw
+// them) and clipped to a shrinking rect. Newborn cells are clipped to a
+// growing rect.
+function _buildAnimFrame(p, n, z, x0, y0, t){
+  const M = p.m.map(r=>r.slice());
+  const G = p.grid.map(r=>r.slice());
+  const clips = {};
+  const putClip = (y, x, rect) => {
+    if(!clips[y]) clips[y] = {};
+    clips[y][x] = rect;
+  };
+  if(p.anim && p.anim.spawn){
+    for(const s of p.anim.spawn){
+      const px = x0 + s.x*z, py = y0 + s.y*z;
+      putClip(s.y, s.x, _growRect(px, py, z, t, s.anchor));
+    }
+  }
+  if(p.anim && p.anim.die){
+    for(const d of p.anim.die){
+      M[d.y][d.x] = 1;
+      G[d.y][d.x] = d.color;
+      const px = x0 + d.x*z, py = y0 + d.y*z;
+      putClip(d.y, d.x, _growRect(px, py, z, 1-t, d.anchor));
+    }
+  }
+  return { M, G, clips };
+}
+
+function render(t){
   const s=state,cv=document.getElementById('cv'),ctx=cv.getContext('2d');
   cv.width=s.cw;cv.height=s.ch;
   // canvas bitmap stays transparent; bg is painted by .canvas-holder via CSS var
   document.body.style.setProperty('--canvas-bg', s.bg==='black'?'#000':'#fff');
   ctx.clearRect(0,0,s.cw,s.ch);
   const stride=s.n*s.pscale+s.spacing;
-  const opts={outer:s.outerRound, inner:s.innerRound, gradient:s.gradBlend};
+  const baseOpts={outer:s.outerRound, inner:s.innerRound, gradient:s.gradBlend};
+  const animActive = (typeof t === 'number' && t < 1);
   let i=0;
   for(let rr=0;rr<s.rows;rr++)for(let c=0;c<s.cols;c++){
     const p=s.patterns[i++];
     const x0=s.offsetX+c*stride, y0=s.offsetY+rr*stride;
-    drawPatternToCtx(ctx, p.m, p.grid, s.n, s.pscale, x0, y0, opts);
+    if(animActive && p.anim){
+      const frame = _buildAnimFrame(p, s.n, s.pscale, x0, y0, t);
+      drawPatternToCtx(ctx, frame.M, frame.G, s.n, s.pscale, x0, y0,
+                       Object.assign({}, baseOpts, { clips: frame.clips }));
+    } else {
+      drawPatternToCtx(ctx, p.m, p.grid, s.n, s.pscale, x0, y0, baseOpts);
+    }
   }
   fitCanvas();
 }
@@ -1325,6 +1405,31 @@ function morphPick(paletteMode, palette, bg, neighbour){
   if(palette && palette.length) return palette[Math.floor(Math.random()*palette.length)];
   return bg==='black'?'#ffffff':'#000000';
 }
+// Direction table: [dy, dx, anchor of SELF that faces the neighbour].
+// If the neighbour is ABOVE (dy=-1), the shared edge is SELF's TOP edge,
+// so a newborn pinned to its parent-above grows downward from its top edge.
+const _MORPH_DIRS = [[-1,0,'top'],[1,0,'bottom'],[0,-1,'left'],[0,1,'right']];
+
+let _morphAnimRaf = null;
+function _animateMorph(){
+  if(_morphAnimRaf) cancelAnimationFrame(_morphAnimRaf);
+  // half the autoplay interval, floor at ~1 frame
+  const dur = Math.max(16, (+getVal('autospeed') || 800) * 0.5);
+  const start = performance.now();
+  const frame = (now) => {
+    const t = Math.min(1, (now - start) / dur);
+    render(t);
+    if(t < 1){
+      _morphAnimRaf = requestAnimationFrame(frame);
+    } else {
+      if(state && state.patterns) for(const p of state.patterns) p.anim = null;
+      _morphAnimRaf = null;
+      render();
+    }
+  };
+  _morphAnimRaf = requestAnimationFrame(frame);
+}
+
 function morphStep(){
   if(!state || !state.patterns) return;
   const s=state, n=s.n;
@@ -1356,8 +1461,32 @@ function morphStep(){
       }
     }
     p.grid = newGrid;
+
+    // Animation deltas: newborns anchored to an old-active neighbour,
+    // dying cells anchored to a surviving neighbour.
+    const spawn = [];
+    const die   = [];
+    for(let y=0;y<n;y++) for(let x=0;x<n;x++){
+      const was = !!oldM[y][x], now = !!p.m[y][x];
+      if(now && !was){
+        let anc = null;
+        for(const [dy,dx,a] of _MORPH_DIRS){
+          const ny=y+dy, nx=x+dx;
+          if(ny>=0&&ny<n&&nx>=0&&nx<n && oldM[ny][nx]){ anc = a; break; }
+        }
+        spawn.push({ y, x, anchor: anc });
+      } else if(was && !now){
+        let anc = null;
+        for(const [dy,dx,a] of _MORPH_DIRS){
+          const ny=y+dy, nx=x+dx;
+          if(ny>=0&&ny<n&&nx>=0&&nx<n && p.m[ny][nx]){ anc = a; break; }
+        }
+        die.push({ y, x, anchor: anc, color: oldGrid[y][x] });
+      }
+    }
+    p.anim = (spawn.length || die.length) ? { spawn, die } : null;
   }
-  render();
+  _animateMorph();
 }
 
 // ========== autoplay ==========
