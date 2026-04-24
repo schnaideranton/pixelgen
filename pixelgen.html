@@ -111,6 +111,13 @@ canvas{cursor:pointer}
 
 /* ==== autoplay + fullscreen ==== */
 body.autoplaying #autoplay,body.autoplaying #fsAutoplay{background:#06ffa5;color:#000;border-color:#06ffa5}
+body.beatsyncing #beatsync{background:#ff14c6;color:#000;border-color:#ff14c6}
+.beat-row{grid-column:1/-1;display:flex;align-items:center;gap:8px;border-top:1px solid #1a1a1a;padding-top:8px}
+.beat-row .beat-label{color:#555;font-size:9px;text-transform:uppercase;letter-spacing:.18em;flex-shrink:0;width:38px}
+.beat-row input[type=range]{flex:1;accent-color:#ff14c6}
+.beat-meter{flex:0 0 64px;height:8px;background:#1a1a1a;border:1px solid #252525;position:relative;overflow:hidden}
+.beat-meter>span{position:absolute;inset:0;width:calc(var(--lvl,0)*100%);background:linear-gradient(90deg,#06ffa5,#ff14c6);transition:width .06s linear}
+body.beat-flash .canvas-holder{filter:brightness(1.18)}
 .fs-overlay{position:fixed;bottom:24px;right:20px;display:none;gap:8px;z-index:100}
 .fs-overlay button{background:rgba(0,0,0,0.55);border:1px solid rgba(255,255,255,0.22);color:#fff;width:52px;height:52px;font-size:18px;cursor:pointer;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);border-radius:6px;font-family:inherit;touch-action:manipulation}
 @media(max-width:820px){.fs-overlay{bottom:calc(28px + env(safe-area-inset-bottom));right:16px}.fs-overlay button{width:60px;height:60px;font-size:22px}}
@@ -325,7 +332,7 @@ body.fs{overflow:hidden!important;position:fixed;width:100%;height:100%}
       <button id="savejson">save patterns json</button>
       <button id="download">download png (fallback)</button>
       <div class="hint" style="margin-top:10px">
-        <kbd>space</kbd> regen · <kbd>R</kbd> wild · <kbd>A</kbd> auto · <kbd>F</kbd> fullscreen · <kbd>⌘S</kbd> save
+        <kbd>space</kbd> regen · <kbd>R</kbd> wild · <kbd>A</kbd> auto · <kbd>B</kbd> beat-sync · <kbd>F</kbd> fullscreen · <kbd>⌘S</kbd> save
       </div>
     </div>
   </aside>
@@ -348,7 +355,8 @@ body.fs{overflow:hidden!important;position:fixed;width:100%;height:100%}
       <button id="gen">regenerate</button>
       <button id="genwild" class="alt">full random</button>
       <button id="autoplay" class="alt">▶ autoplay</button>
-      <button id="fullscreen" class="alt">⛶ fullscreen</button>
+      <button id="beatsync" class="alt">♪ beat-sync</button>
+      <button id="fullscreen" class="alt" style="grid-column:1/-1">⛶ fullscreen</button>
       <div class="speed-row">
         <span class="speed-label">speed</span>
         <div class="seg" id="autospeed" data-val="2000">
@@ -360,6 +368,11 @@ body.fs{overflow:hidden!important;position:fixed;width:100%;height:100%}
           <button data-v="5000">5s</button>
           <button data-v="10000">10s</button>
         </div>
+      </div>
+      <div class="beat-row">
+        <span class="beat-label">beat</span>
+        <input type="range" id="beatsens" min="1.10" max="2.50" step="0.05" value="1.55" title="sensitivity">
+        <div class="beat-meter" id="beatlvl"><span></span></div>
       </div>
     </div>
     <div class="status" id="status">ready.</div>
@@ -820,8 +833,8 @@ function generateWild(){
   const ri = n => Math.floor(Math.random()*n);
   const p = a => a[ri(a.length)];
 
-  // bg biased black
-  setSeg('bg', p(['black','black','black','white']));
+  // bg is USER-owned: wild mode never touches it. Default is black; flip
+  // to white only by explicit click in the UI.
 
   // pattern size: integer 3–20, biased toward 5–9 so wild mode mostly stays readable
   const pSize = p([3,4,5,5,5,6,7,7,8,9,10,11,13,16,20]);
@@ -877,28 +890,44 @@ if(typeof CanvasRenderingContext2D!=='undefined' && !CanvasRenderingContext2D.pr
     if(tl) this.arcTo(x,y,x+tl,y,tl);
   };
 }
+// BLEED: each fillet sits in an empty cell, abutting two active neighbours
+// along the two straight sides of its wedge. With the canvas displayed at
+// non-integer CSS scale, those shared edges antialias on both sides and
+// produce a 1-px black hairline (bg shows through the partial-coverage
+// pixels). We overshoot the straight edges by _FB px into the neighbours,
+// so the seam gets overpainted. The arc itself is untouched — its curved
+// boundary is the only visible edge of the fillet.
+const _FB = 1;
 function filletTL(ctx,px,py,r,col){
   ctx.fillStyle=toHexColor(col); ctx.beginPath();
-  ctx.moveTo(px,py); ctx.lineTo(px+r,py);
-  ctx.arc(px+r,py+r,r,-Math.PI/2,Math.PI,true);
+  ctx.moveTo(px+r, py-_FB);                              // above arc start
+  ctx.arc(px+r, py+r, r, -Math.PI/2, Math.PI, true);     // arc: (px+r,py) → (px,py+r)
+  ctx.lineTo(px-_FB, py+r);                              // left of arc end
+  ctx.lineTo(px-_FB, py-_FB);                            // corner overshoot
   ctx.closePath(); ctx.fill();
 }
 function filletTR(ctx,px,py,z,r,col){
   ctx.fillStyle=toHexColor(col); ctx.beginPath();
-  ctx.moveTo(px+z,py); ctx.lineTo(px+z-r,py);
-  ctx.arc(px+z-r,py+r,r,-Math.PI/2,0,false);
+  ctx.moveTo(px+z-r, py-_FB);                            // above arc start
+  ctx.arc(px+z-r, py+r, r, -Math.PI/2, 0, false);        // arc: (px+z-r,py) → (px+z,py+r)
+  ctx.lineTo(px+z+_FB, py+r);                            // right of arc end
+  ctx.lineTo(px+z+_FB, py-_FB);                          // corner overshoot
   ctx.closePath(); ctx.fill();
 }
 function filletBL(ctx,px,py,z,r,col){
   ctx.fillStyle=toHexColor(col); ctx.beginPath();
-  ctx.moveTo(px,py+z); ctx.lineTo(px+r,py+z);
-  ctx.arc(px+r,py+z-r,r,Math.PI/2,Math.PI,false);
+  ctx.moveTo(px+r, py+z+_FB);                            // below arc start
+  ctx.arc(px+r, py+z-r, r, Math.PI/2, Math.PI, false);   // arc: (px+r,py+z) → (px,py+z-r)
+  ctx.lineTo(px-_FB, py+z-r);                            // left of arc end
+  ctx.lineTo(px-_FB, py+z+_FB);                          // corner overshoot
   ctx.closePath(); ctx.fill();
 }
 function filletBR(ctx,px,py,z,r,col){
   ctx.fillStyle=toHexColor(col); ctx.beginPath();
-  ctx.moveTo(px+z,py+z); ctx.lineTo(px+z-r,py+z);
-  ctx.arc(px+z-r,py+z-r,r,Math.PI/2,0,true);
+  ctx.moveTo(px+z-r, py+z+_FB);                          // below arc start
+  ctx.arc(px+z-r, py+z-r, r, Math.PI/2, 0, true);        // arc: (px+z-r,py+z) → (px+z,py+z-r)
+  ctx.lineTo(px+z+_FB, py+z-r);                          // right of arc end
+  ctx.lineTo(px+z+_FB, py+z+_FB);                        // corner overshoot
   ctx.closePath(); ctx.fill();
 }
 // ========== color blend helpers ==========
@@ -1600,6 +1629,77 @@ function updateAutoplayUI(){
   if(fs) fs.textContent=on?'■':'▶';
 }
 
+// ========== beat-sync (audio-reactive morph) ==========
+// Requests the mic, runs an rAF loop on an AnalyserNode, and fires
+// tickAutoplay() on each detected onset in the bass band (bins 1..8,
+// ~0–700 Hz at 44.1 kHz — where kicks, claps, basslines live).
+// Each beat advances the current `autosrc` (fixed / morph / wild), so the
+// button behaves like a светомузыка trigger without dictating morph vs.
+// full regen. Sensitivity slider tunes the threshold multiplier.
+let audioCtx=null, audioStream=null, audioAnalyser=null, audioRaf=null;
+let audioMean=0, audioLastOnset=0;
+function beatSyncOn(){
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    setStatus('mic API unavailable in this browser','err'); return;
+  }
+  navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}}).then(stream=>{
+    audioStream = stream;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    audioCtx = new AC();
+    // Some browsers start context suspended — resume on user gesture (the click).
+    if(audioCtx.state==='suspended' && audioCtx.resume) audioCtx.resume().catch(()=>{});
+    const src = audioCtx.createMediaStreamSource(stream);
+    audioAnalyser = audioCtx.createAnalyser();
+    audioAnalyser.fftSize = 512;
+    audioAnalyser.smoothingTimeConstant = 0.35;
+    src.connect(audioAnalyser);
+    const buf = new Uint8Array(audioAnalyser.frequencyBinCount);
+    audioMean = 0; audioLastOnset = 0;
+    const meter = document.getElementById('beatlvl');
+    function tick(){
+      if(!audioAnalyser){ return; }
+      audioAnalyser.getByteFrequencyData(buf);
+      // bass energy = mean of bins 1..8, skipping bin 0 (DC)
+      let bass = 0; for(let i=1;i<9;i++) bass += buf[i]; bass /= 8;
+      // EMA — faster fall on silence, slower rise so a single kick pops out
+      audioMean = 0.92*audioMean + 0.08*bass;
+      if(meter) meter.style.setProperty('--lvl', Math.min(1, bass/140));
+      const now = performance.now();
+      const sens = +(document.getElementById('beatsens')?.value || 1.55);
+      // onset: bass exceeds EMA by sens×, above noise floor, debounced
+      if(bass > audioMean*sens && bass > 28 && now - audioLastOnset > 140){
+        audioLastOnset = now;
+        tickAutoplay();
+        document.body.classList.add('beat-flash');
+        setTimeout(()=>document.body.classList.remove('beat-flash'), 70);
+      }
+      audioRaf = requestAnimationFrame(tick);
+    }
+    tick();
+    document.body.classList.add('beatsyncing');
+    updateBeatUI();
+    setStatus('beat-sync ♪ mic listening', 'ok');
+  }).catch(e=>{
+    setStatus('mic denied: '+(e.message||e.name), 'err');
+  });
+}
+function beatSyncOff(){
+  if(audioRaf){ cancelAnimationFrame(audioRaf); audioRaf=null; }
+  if(audioAnalyser){ try{audioAnalyser.disconnect()}catch(_){} audioAnalyser=null; }
+  if(audioCtx){ audioCtx.close().catch(()=>{}); audioCtx=null; }
+  if(audioStream){ audioStream.getTracks().forEach(t=>{try{t.stop()}catch(_){}}); audioStream=null; }
+  document.body.classList.remove('beatsyncing');
+  const meter = document.getElementById('beatlvl');
+  if(meter) meter.style.setProperty('--lvl', 0);
+  updateBeatUI();
+  setStatus('beat-sync off');
+}
+function toggleBeatSync(){ audioCtx ? beatSyncOff() : beatSyncOn(); }
+function updateBeatUI(){
+  const b = document.getElementById('beatsync');
+  if(b) b.textContent = audioCtx ? '■ beat-sync' : '♪ beat-sync';
+}
+
 // ========== fullscreen ==========
 let cssOnlyFS = false; // true when browser FS API unavailable (iOS Safari etc)
 function enterCSSFullscreen(){
@@ -1687,6 +1787,7 @@ document.getElementById('fill').addEventListener('input',e=>{
 document.getElementById('gen').addEventListener('click',generate);
 document.getElementById('genwild').addEventListener('click',generateWild);
 document.getElementById('autoplay').addEventListener('click',toggleAutoplay);
+document.getElementById('beatsync').addEventListener('click',toggleBeatSync);
 document.getElementById('fullscreen').addEventListener('click',toggleFullscreen);
 document.getElementById('fsAutoplay').addEventListener('click',toggleAutoplay);
 document.getElementById('fsExit').addEventListener('click',toggleFullscreen);
@@ -1855,9 +1956,25 @@ function clearImagePalette(){
   }
 })();
 
+// Recolor-only: keep pattern matrices + layout intact, re-apply palette
+// to every symbol's grid. Used when only colour changes (custom pickers,
+// palette swap) — avoids reshuffling the patterns themselves on each cursor
+// tick of a colour picker. Reseeds off state.seed so results are stable.
+function recolor(){
+  if(!state || !state.patterns) return;
+  const palette = getPalette(state.paletteMode, state.bg);
+  rand = mulberry32((state.seed || 1) ^ 0x9e3779b1);
+  for(const p of state.patterns){
+    p.grid = colorize(p.m, palette, state.maxColors, state.bg, state.paletteMode);
+    p.anim = null;
+  }
+  render();
+}
+
 // custom palette: 8 colour pickers. Editing any swatch (a) updates
 // customPalette, (b) auto-selects "custom" palette mode if not already, and
-// (c) regenerates. `input` fires on every cursor move → throttle with rAF.
+// (c) RECOLORS only — pattern shapes stay put, so dragging the eyedropper
+// across hues smoothly repaints instead of re-rolling a new set of symbols.
 (function wireCustomPalette(){
   const row = document.getElementById('customColors');
   if(!row) return;
@@ -1868,8 +1985,11 @@ function clearImagePalette(){
       const i = +inp.dataset.idx;
       customPalette[i] = inp.value;
     });
-    if(getVal('palette') !== 'custom') setSeg('palette', 'custom');
-    generate();
+    const wasCustom = getVal('palette') === 'custom';
+    if(!wasCustom) setSeg('palette', 'custom');
+    // first time switching INTO custom — do a full generate so state
+    // picks up the mode; subsequent hue drags just recolor.
+    if(!wasCustom) generate(); else recolor();
   };
   row.addEventListener('input', ()=>{
     if(pending) return;
@@ -1895,6 +2015,7 @@ document.addEventListener('keydown',e=>{
   if(e.code==='Space'){e.preventDefault();generate()}
   else if(e.key==='r'||e.key==='R'){e.preventDefault();generateWild()}
   else if(e.key==='a'||e.key==='A'){e.preventDefault();toggleAutoplay()}
+  else if(e.key==='b'||e.key==='B'){e.preventDefault();toggleBeatSync()}
   else if(e.key==='f'||e.key==='F'){e.preventDefault();toggleFullscreen()}
   else if(e.key==='Escape' && cssOnlyFS){
     exitCSSFullscreen();
