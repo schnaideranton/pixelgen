@@ -116,16 +116,21 @@ body.bpmlocking #bpmsync{background:#06ffa5;color:#000;border-color:#06ffa5}
 .beat-eq{grid-column:1/-1;display:grid;grid-template-columns:34px 1fr 56px;gap:6px 8px;align-items:center;border-top:1px solid #1a1a1a;padding-top:8px}
 .beat-eq .band-label{color:#777;font-size:10px;text-transform:uppercase;letter-spacing:.18em;text-align:right}
 .beat-eq input[type=range]{width:100%;accent-color:#ff14c6}
-.beat-meter{height:8px;background:#1a1a1a;border:1px solid #252525;position:relative;overflow:hidden}
-.beat-meter>span{position:absolute;inset:0;width:calc(var(--lvl,0)*100%);background:linear-gradient(90deg,#06ffa5,#ff14c6);transition:width .06s linear}
-/* per-band colour cues: low=pink, mid=amber, high=cyan — matches what
-   the ear expects from a spectrum (warm bass → cool highs) */
-.beat-eq .band-label.lo{color:#ff14c6}
-.beat-eq .band-label.mi{color:#ffbe0b}
-.beat-eq .band-label.hi{color:#06ffa5}
-.beat-eq .beat-meter.lo>span{background:#ff14c6}
-.beat-eq .beat-meter.mi>span{background:#ffbe0b}
-.beat-eq .beat-meter.hi>span{background:#06ffa5}
+/* onset-pulse meters: the bar is dark at rest and flashes ONLY when an
+   onset is detected for its band — the user tunes sensitivity until the
+   flash aligns with the audible beat, not with room noise. */
+.beat-meter{height:10px;background:#1a1a1a;border:1px solid #252525;position:relative;overflow:hidden;border-radius:2px}
+.beat-meter>span{position:absolute;inset:0;background:currentColor;opacity:0;transform-origin:left;box-shadow:0 0 8px currentColor;will-change:opacity,transform}
+.beat-meter.pulse>span{animation:beatPulse .22s ease-out}
+@keyframes beatPulse{
+  0%  {opacity:0;transform:scaleX(0.02)}
+  12% {opacity:1;transform:scaleX(1)}
+  100%{opacity:0;transform:scaleX(1)}
+}
+/* per-band colour cues: low=pink, mid=amber, high=cyan */
+.beat-eq .band-label.lo,.beat-eq .beat-meter.lo{color:#ff14c6}
+.beat-eq .band-label.mi,.beat-eq .beat-meter.mi{color:#ffbe0b}
+.beat-eq .band-label.hi,.beat-eq .beat-meter.hi{color:#06ffa5}
 .bpm-row{grid-column:1/-1;display:flex;align-items:center;gap:8px;margin-top:4px}
 .bpm-row button{flex:1}
 .bpm-display{flex:0 0 88px;text-align:center;background:#0a0a0a;border:1px solid #1f1f1f;color:#06ffa5;font-family:'JetBrains Mono',ui-monospace,monospace;font-size:22px;font-weight:600;padding:6px 8px;letter-spacing:0.02em;min-height:36px;display:flex;align-items:center;justify-content:center;transition:color .15s}
@@ -1815,7 +1820,7 @@ function _micClose(){
   document.body.classList.remove('beatsyncing','bpmlocking');
   ['beatlvl_lo','beatlvl_mi','beatlvl_hi'].forEach(id=>{
     const m = document.getElementById(id);
-    if(m) m.style.setProperty('--lvl', 0);
+    if(m) m.classList.remove('pulse');
   });
   updateBeatUI();
   updateBpmUI();
@@ -1883,11 +1888,17 @@ function _runBand3(){
       let mean = 0;
       for(let i=0;i<st.histFilled;i++) mean += st.hist[i];
       mean /= Math.max(1, st.histFilled);
-      // meter: per-band flux normalized by band width
-      const norm = flux / Math.max(1, st.width) / 6;
-      if(st.meterEl) st.meterEl.style.setProperty('--lvl', Math.min(1, norm));
+      // onset-only meter: flash the bar ONLY when we decided this is a hit.
+      // The user tunes the slider watching this flash — it's a go/no-go
+      // indicator, not a level meter. Room noise shouldn't make it blink.
       if(flux > mean*sens && flux > st.minFlux && total > st.minTotal && now - st.lastOnset > 120){
         st.lastOnset = now;
+        if(st.meterEl){
+          st.meterEl.classList.remove('pulse');
+          // force reflow to restart the keyframe on every hit
+          void st.meterEl.offsetWidth;
+          st.meterEl.classList.add('pulse');
+        }
         if(autosrc === 'morph' && state && state.patterns){
           morphStep((p) => p.band === bi);
         } else if(now - audioLastOnset > 120){
@@ -1903,9 +1914,24 @@ function _runBand3(){
 }
 
 // --- BPM lock ---
-let bpmValue = 0;
+// Design:
+//  1. Listen to the LOW band only (kick/bass). Hats/snares subdivide the beat
+//     and cause the classic "shows 200, real is 100" doubling. Kicks live on
+//     the downbeat much more reliably.
+//  2. Collect onsets over 15 s. Build inter-onset intervals for every pair
+//     within the last few hits (skip-1, skip-2) — robust to missed kicks.
+//  3. Fold every candidate BPM into the musical anchor range 75–150 by
+//     halving/doubling. Double-time and half-time both collapse to the same
+//     peak in the histogram.
+//  4. Bucket the folded values (2-BPM bins) and pick the mode. That's the
+//     RAW estimate each tick.
+//  5. HYSTERESIS: don't redisplay raw — keep a committed BPM, only change it
+//     when a different peak wins ≥5 consecutive updates with strong support.
+let bpmValue = 0;         // what the UI shows (= committed)
 let bpmLocked = false;
-let bpmOnsets = []; // timestamps within last ~8s
+let bpmOnsets = [];       // timestamps within last ~15s
+let bpmCommitted = 0;     // tempo we are currently "locked" onto
+let bpmDisagreeCount = 0; // streak of raw estimates differing from committed
 function updateBpmUI(){
   const btn = document.getElementById('bpmsync');
   if(btn) btn.textContent = audioMode==='bpm' ? '■ BPM lock' : '⏱ BPM lock';
@@ -1931,11 +1957,13 @@ function bpmLockOn(){
     bpmValue = 0;
     bpmLocked = false;
     bpmOnsets = [];
+    bpmCommitted = 0;
+    bpmDisagreeCount = 0;
     document.body.classList.add('bpmlocking');
     document.body.classList.remove('beatsyncing');
     updateBeatUI(); updateBpmUI();
     _runBPM();
-    setStatus('BPM lock ⏱ listening — morph fires on every detected beat', 'ok');
+    setStatus('BPM lock ⏱ listening to low band — will lock the tempo', 'ok');
   });
 }
 function bpmLockOff(){ if(audioMode==='bpm'){ _micClose(); setStatus('BPM lock off'); } }
@@ -1945,13 +1973,18 @@ function _runBPM(){
   const nBins = audioAnalyser.frequencyBinCount;
   const buf = new Uint8Array(nBins);
   const prev = new Uint8Array(nBins);
+  // Low band: fftSize=1024 @ 48kHz ⇒ ~46.9 Hz/bin. Bins 1–10 ≈ 47–469 Hz —
+  // kick fundamental, sub, bass thumps.
+  const LO_START = 1, LO_END = Math.min(nBins, 10);
   const histSize = 48;
   const hist = new Float32Array(histSize);
   let histI = 0, histFilled = 0, lastOnset = 0;
-  // Flash the display briefly on each onset — cheap visual for "pulse".
+  // Fold every candidate BPM into this anchor range. Music in the wild
+  // sits between ~70 and ~150 BPM; outliers (DnB 170, slow hiphop 65) still
+  // collapse onto the same histogram peak after halving/doubling.
+  const FOLD_LO = 75, FOLD_HI = 150;
   const flashDisp = () => {
     document.body.classList.remove('bpm-pulse');
-    // force reflow to restart animation
     void document.getElementById('bpmdisplay').offsetWidth;
     document.body.classList.add('bpm-pulse');
   };
@@ -1959,12 +1992,13 @@ function _runBPM(){
     if(!audioAnalyser || audioMode!=='bpm'){ return; }
     audioAnalyser.getByteFrequencyData(buf);
     let flux = 0, total = 0;
-    for(let i=1;i<nBins;i++){
+    for(let i=LO_START;i<LO_END;i++){
       const d = buf[i] - prev[i];
       if(d > 0) flux += d;
       total += buf[i];
-      prev[i] = buf[i];
     }
+    // copy full buffer so prev is always populated (harmless, keeps code simple)
+    for(let i=0;i<nBins;i++) prev[i] = buf[i];
     hist[histI] = flux;
     histI = (histI+1) % histSize;
     if(histFilled < histSize) histFilled++;
@@ -1972,36 +2006,64 @@ function _runBPM(){
     for(let i=0;i<histFilled;i++) mean += hist[i];
     mean /= Math.max(1, histFilled);
     const now = performance.now();
-    // BPM uses a moderate global sensitivity; inter-onset debounce is
-    // tighter (150 ms) so fast tempos up to ~400 BPM can be captured
-    // before the median-filter clamps to the musical range.
-    const sens = 1.45;
-    if(flux > mean*sens && flux > 70 && total > 400 && now - lastOnset > 150){
+    // Kick detection: a little stricter than mid/high because low band has
+    // fewer bins and rings longer. Min debounce 180 ms ≈ max 333 "kicks"/min.
+    const sens = 1.5;
+    if(flux > mean*sens && flux > 12 && total > 25 && now - lastOnset > 180){
       lastOnset = now;
       bpmOnsets.push(now);
-      // prune beyond 8 s
-      while(bpmOnsets.length && bpmOnsets[0] < now - 8000) bpmOnsets.shift();
-      // estimate BPM from inter-onset intervals
-      if(bpmOnsets.length >= 4){
-        const iv = [];
+      while(bpmOnsets.length && bpmOnsets[0] < now - 15000) bpmOnsets.shift();
+      if(bpmOnsets.length >= 5){
+        // Build folded-BPM histogram from pair-wise intervals (skip 1..3)
+        const buckets = new Map();
+        let used = 0;
         for(let i=1;i<bpmOnsets.length;i++){
-          const d = bpmOnsets[i] - bpmOnsets[i-1];
-          if(d >= 250 && d <= 1500) iv.push(d); // 40..240 BPM
+          const kMax = Math.min(3, i);
+          for(let k=1;k<=kMax;k++){
+            const d = bpmOnsets[i] - bpmOnsets[i-k];
+            if(d < 150 || d > 2500) continue;
+            let b = 60000 / d;
+            while(b > FOLD_HI) b /= 2;
+            while(b < FOLD_LO) b *= 2;
+            const bin = Math.round(b / 2) * 2; // 2-BPM bins
+            buckets.set(bin, (buckets.get(bin) || 0) + 1);
+            used++;
+          }
         }
-        if(iv.length >= 3){
-          iv.sort((a,b)=>a-b);
-          const med = iv[Math.floor(iv.length/2)];
-          // variance → "locked" if relative stddev < 12%
-          let m=0; for(const v of iv) m+=v; m/=iv.length;
-          let s2=0; for(const v of iv) s2+=(v-m)*(v-m); s2/=iv.length;
-          const rstd = Math.sqrt(s2)/m;
-          bpmValue = Math.round(60000/med);
-          bpmLocked = (rstd < 0.12 && iv.length >= 5);
+        if(used >= 4){
+          let peakBin = 0, peakCount = 0;
+          for(const [k,v] of buckets){ if(v > peakCount){ peakCount = v; peakBin = k; } }
+          // commit logic — hysteresis so the display doesn't flicker
+          if(bpmCommitted === 0){
+            // first time: need enough support to commit
+            if(peakCount >= 5){
+              bpmCommitted = peakBin;
+              bpmDisagreeCount = 0;
+              bpmLocked = false;
+            }
+          } else {
+            const diff = Math.abs(peakBin - bpmCommitted);
+            if(diff <= 4){
+              // peak agrees — tighten lock, reset disagree streak
+              bpmDisagreeCount = 0;
+              if(peakCount >= 7) bpmLocked = true;
+            } else {
+              // peak disagrees — only commit after a sustained streak with
+              // strong support. Prevents accidental tempo flips on noise.
+              bpmDisagreeCount++;
+              bpmLocked = false;
+              if(bpmDisagreeCount >= 5 && peakCount >= 6){
+                bpmCommitted = peakBin;
+                bpmDisagreeCount = 0;
+              }
+            }
+          }
+          bpmValue = bpmCommitted;
           updateBpmUI();
         }
       }
       flashDisp();
-      // fire morph on the beat (all patterns — BPM mode ignores band tags)
+      // fire morph on the beat (BPM mode ignores band tags)
       if(state && state.patterns){
         const autosrc = getVal('autosrc');
         if(autosrc === 'morph') morphStep();
