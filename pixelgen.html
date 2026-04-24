@@ -117,7 +117,6 @@ body.beatsyncing #beatsync{background:#ff14c6;color:#000;border-color:#ff14c6}
 .beat-row input[type=range]{flex:1;accent-color:#ff14c6}
 .beat-meter{flex:0 0 64px;height:8px;background:#1a1a1a;border:1px solid #252525;position:relative;overflow:hidden}
 .beat-meter>span{position:absolute;inset:0;width:calc(var(--lvl,0)*100%);background:linear-gradient(90deg,#06ffa5,#ff14c6);transition:width .06s linear}
-body.beat-flash .canvas-holder{filter:brightness(1.18)}
 .fs-overlay{position:fixed;bottom:24px;right:20px;display:none;gap:8px;z-index:100}
 .fs-overlay button{background:rgba(0,0,0,0.55);border:1px solid rgba(255,255,255,0.22);color:#fff;width:52px;height:52px;font-size:18px;cursor:pointer;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);border-radius:6px;font-family:inherit;touch-action:manipulation}
 @media(max-width:820px){.fs-overlay{bottom:calc(28px + env(safe-area-inset-bottom));right:16px}.fs-overlay button{width:60px;height:60px;font-size:22px}}
@@ -898,37 +897,50 @@ if(typeof CanvasRenderingContext2D!=='undefined' && !CanvasRenderingContext2D.pr
 // so the seam gets overpainted. The arc itself is untouched — its curved
 // boundary is the only visible edge of the fillet.
 const _FB = 1;
-function filletTL(ctx,px,py,r,col){
-  ctx.fillStyle=toHexColor(col); ctx.beginPath();
-  ctx.moveTo(px+r, py-_FB);                              // above arc start
+// Path-only helpers (no beginPath / no fill). They append the wedge shape —
+// including the _FB bleed — to the caller's current path. Used both for
+// solid fillet fills AND for extending the bilinear-blend clip region so
+// the gradient flows seamlessly from an active cell into its fillet
+// without a colour step at the shared corner.
+function _filletTLPath(ctx,px,py,r){
+  ctx.moveTo(px+r, py-_FB);
   ctx.arc(px+r, py+r, r, -Math.PI/2, Math.PI, true);     // arc: (px+r,py) → (px,py+r)
-  ctx.lineTo(px-_FB, py+r);                              // left of arc end
-  ctx.lineTo(px-_FB, py-_FB);                            // corner overshoot
-  ctx.closePath(); ctx.fill();
+  ctx.lineTo(px-_FB, py+r);
+  ctx.lineTo(px-_FB, py-_FB);
+  ctx.closePath();
+}
+function _filletTRPath(ctx,px,py,z,r){
+  ctx.moveTo(px+z-r, py-_FB);
+  ctx.arc(px+z-r, py+r, r, -Math.PI/2, 0, false);        // arc: (px+z-r,py) → (px+z,py+r)
+  ctx.lineTo(px+z+_FB, py+r);
+  ctx.lineTo(px+z+_FB, py-_FB);
+  ctx.closePath();
+}
+function _filletBLPath(ctx,px,py,z,r){
+  ctx.moveTo(px+r, py+z+_FB);
+  ctx.arc(px+r, py+z-r, r, Math.PI/2, Math.PI, false);   // arc: (px+r,py+z) → (px,py+z-r)
+  ctx.lineTo(px-_FB, py+z-r);
+  ctx.lineTo(px-_FB, py+z+_FB);
+  ctx.closePath();
+}
+function _filletBRPath(ctx,px,py,z,r){
+  ctx.moveTo(px+z-r, py+z+_FB);
+  ctx.arc(px+z-r, py+z-r, r, Math.PI/2, 0, true);        // arc: (px+z-r,py+z) → (px+z,py+z-r)
+  ctx.lineTo(px+z+_FB, py+z-r);
+  ctx.lineTo(px+z+_FB, py+z+_FB);
+  ctx.closePath();
+}
+function filletTL(ctx,px,py,r,col){
+  ctx.fillStyle=toHexColor(col); ctx.beginPath(); _filletTLPath(ctx,px,py,r); ctx.fill();
 }
 function filletTR(ctx,px,py,z,r,col){
-  ctx.fillStyle=toHexColor(col); ctx.beginPath();
-  ctx.moveTo(px+z-r, py-_FB);                            // above arc start
-  ctx.arc(px+z-r, py+r, r, -Math.PI/2, 0, false);        // arc: (px+z-r,py) → (px+z,py+r)
-  ctx.lineTo(px+z+_FB, py+r);                            // right of arc end
-  ctx.lineTo(px+z+_FB, py-_FB);                          // corner overshoot
-  ctx.closePath(); ctx.fill();
+  ctx.fillStyle=toHexColor(col); ctx.beginPath(); _filletTRPath(ctx,px,py,z,r); ctx.fill();
 }
 function filletBL(ctx,px,py,z,r,col){
-  ctx.fillStyle=toHexColor(col); ctx.beginPath();
-  ctx.moveTo(px+r, py+z+_FB);                            // below arc start
-  ctx.arc(px+r, py+z-r, r, Math.PI/2, Math.PI, false);   // arc: (px+r,py+z) → (px,py+z-r)
-  ctx.lineTo(px-_FB, py+z-r);                            // left of arc end
-  ctx.lineTo(px-_FB, py+z+_FB);                          // corner overshoot
-  ctx.closePath(); ctx.fill();
+  ctx.fillStyle=toHexColor(col); ctx.beginPath(); _filletBLPath(ctx,px,py,z,r); ctx.fill();
 }
 function filletBR(ctx,px,py,z,r,col){
-  ctx.fillStyle=toHexColor(col); ctx.beginPath();
-  ctx.moveTo(px+z-r, py+z+_FB);                          // below arc start
-  ctx.arc(px+z-r, py+z-r, r, Math.PI/2, 0, true);        // arc: (px+z-r,py+z) → (px+z,py+z-r)
-  ctx.lineTo(px+z+_FB, py+z-r);                          // right of arc end
-  ctx.lineTo(px+z+_FB, py+z+_FB);                        // corner overshoot
-  ctx.closePath(); ctx.fill();
+  ctx.fillStyle=toHexColor(col); ctx.beginPath(); _filletBRPath(ctx,px,py,z,r); ctx.fill();
 }
 // ========== color blend helpers ==========
 function _cornerRadii(M,n,x,y,z){
@@ -987,33 +999,52 @@ function _cellRect(clips, y, x, px, py, z){
   if(c) return c;
   return { px, py, w: z, h: z };
 }
-// Inside every active cell the colour is bilinearly interpolated from its 4
-// corners and written into an ImageData buffer, then blitted via an offscreen
-// canvas clipped to the (optionally outer-rounded / per-cell growRect) union.
-function _drawBilinearBlend(ctx, M, G, n, z, x0, y0, outer, lattice, clips){
+// Bilinear interpolation over the shared-corner lattice, blitted under a
+// clip made from (active cells outer-rounded rects) ∪ (inner fillet wedges).
+// Because the fillet wedges are carved out of the SAME continuous bilinear
+// image — not filled separately — the colour along every shared edge
+// matches exactly on both sides. No corner seam.
+// Empty cells that host any fillet are ALSO bilinear-filled so the wedge
+// region has valid pixels to show. Active cells fall back to self-colour
+// when some corners are null (e.g. isolated pixels on the grid edge).
+function _drawBilinearBlend(ctx, M, G, n, z, x0, y0, outer, inner, lattice, clips){
   lattice = lattice || _computeLattice(M, G, n);
+  const r = z/2;
   const { rgb, corners } = lattice;
   const W = n*z, H = n*z;
   const img = ctx.createImageData(W, H);
   const data = img.data;
   const denom = z>1 ? (z-1) : 1;
+  // Does empty cell (y,x) host any fillet? (Any L-shape corner of active cells.)
+  const hostsFillet = (y, x) => {
+    if(M[y][x]) return false;
+    if(y>0   && x>0   && M[y-1][x] && M[y][x-1]) return true;
+    if(y>0   && x<n-1 && M[y-1][x] && M[y][x+1]) return true;
+    if(y<n-1 && x>0   && M[y+1][x] && M[y][x-1]) return true;
+    if(y<n-1 && x<n-1 && M[y+1][x] && M[y][x+1]) return true;
+    return false;
+  };
   for(let y=0;y<n;y++){
     for(let x=0;x<n;x++){
-      const self = rgb[y][x]; if(!self) continue;
-      const TL = corners[y][x]     || self;
-      const TR = corners[y][x+1]   || self;
-      const BL = corners[y+1][x]   || self;
-      const BR = corners[y+1][x+1] || self;
+      const self = rgb[y][x];
+      // Fill if cell is active, OR (inner is on AND cell hosts a fillet).
+      const needFill = self || (inner && hostsFillet(y,x));
+      if(!needFill) continue;
+      const C00 = corners[y][x], C10 = corners[y][x+1];
+      const C01 = corners[y+1][x], C11 = corners[y+1][x+1];
+      const fb = self || C00 || C10 || C01 || C11;
+      if(!fb) continue;
+      const TL = C00 || fb, TR = C10 || fb, BL = C01 || fb, BR = C11 || fb;
       for(let ly=0; ly<z; ly++){
         const fy = z>1 ? ly/denom : 0, iy = 1-fy;
         for(let lx=0; lx<z; lx++){
           const fx = z>1 ? lx/denom : 0, ix = 1-fx;
           const w00 = ix*iy, w10 = fx*iy, w01 = ix*fy, w11 = fx*fy;
-          const r = TL[0]*w00 + TR[0]*w10 + BL[0]*w01 + BR[0]*w11;
-          const g = TL[1]*w00 + TR[1]*w10 + BL[1]*w01 + BR[1]*w11;
-          const b = TL[2]*w00 + TR[2]*w10 + BL[2]*w01 + BR[2]*w11;
+          const rr = TL[0]*w00 + TR[0]*w10 + BL[0]*w01 + BR[0]*w11;
+          const gg = TL[1]*w00 + TR[1]*w10 + BL[1]*w01 + BR[1]*w11;
+          const bb = TL[2]*w00 + TR[2]*w10 + BL[2]*w01 + BR[2]*w11;
           const idx = ((y*z+ly)*W + (x*z+lx))*4;
-          data[idx]=r; data[idx+1]=g; data[idx+2]=b; data[idx+3]=255;
+          data[idx]=rr; data[idx+1]=gg; data[idx+2]=bb; data[idx+3]=255;
         }
       }
     }
@@ -1023,6 +1054,7 @@ function _drawBilinearBlend(ctx, M, G, n, z, x0, y0, outer, lattice, clips){
   off.getContext('2d').putImageData(img, 0, 0);
   ctx.save();
   ctx.beginPath();
+  // active cells
   for(let y=0;y<n;y++) for(let x=0;x<n;x++){
     if(!M[y][x]) continue;
     const px = x0+x*z, py = y0+y*z;
@@ -1035,6 +1067,17 @@ function _drawBilinearBlend(ctx, M, G, n, z, x0, y0, outer, lattice, clips){
       ctx.roundRect(rect.px, rect.py, rect.w, rect.h, [tl,tr,br,bl]);
     } else {
       ctx.rect(rect.px, rect.py, rect.w, rect.h);
+    }
+  }
+  // fillet wedges — carve them INTO the same clip so bilinear flows through
+  if(inner){
+    for(let y=0;y<n;y++) for(let x=0;x<n;x++){
+      if(M[y][x]) continue;
+      const px = x0 + x*z, py = y0 + y*z;
+      if(y>0   && x>0   && M[y-1][x] && M[y][x-1]) _filletTLPath(ctx, px, py, r);
+      if(y>0   && x<n-1 && M[y-1][x] && M[y][x+1]) _filletTRPath(ctx, px, py, z, r);
+      if(y<n-1 && x>0   && M[y+1][x] && M[y][x-1]) _filletBLPath(ctx, px, py, z, r);
+      if(y<n-1 && x<n-1 && M[y+1][x] && M[y][x+1]) _filletBRPath(ctx, px, py, z, r);
     }
   }
   ctx.clip();
@@ -1060,7 +1103,9 @@ function drawPatternToCtx(ctx, M, G, n, z, x0, y0, opts){
   // lattice shared between bilinear blend AND inner-fillet colouring
   const lattice = gradient ? _computeLattice(M, G, n) : null;
   if(gradient){
-    _drawBilinearBlend(ctx, M, G, n, z, x0, y0, outer, lattice, clips);
+    // fillets are carved into the bilinear clip — colour flows seamlessly
+    // across the cell→fillet boundary, so no separate solid fillet pass.
+    _drawBilinearBlend(ctx, M, G, n, z, x0, y0, outer, inner, lattice, clips);
   } else {
     // pass 1 — solid fills (with optional per-cell growRect clip)
     for(let y=0;y<n;y++) for(let x=0;x<n;x++){
@@ -1078,17 +1123,15 @@ function drawPatternToCtx(ctx, M, G, n, z, x0, y0, opts){
       }
     }
   }
-  if(inner){
-    // inner fillet colour lookup: prefer the lattice corner colour in blend mode
-    // so the pухлое скругление inherits colour from the same corner the two
-    // adjacent cells share. Fallback to a neighbour cell's raw colour otherwise.
-    const cornerCol = (cy, cx, fa, fb) => {
-      if(lattice){
-        const c = lattice.corners[cy] && lattice.corners[cy][cx];
-        if(c) return _rgbToHex(c);
-      }
-      return fa || fb;
-    };
+  // In gradient mode, fillets are carved into the bilinear clip above —
+  // colour flows continuously across the wedge boundary, no seam. Skip
+  // the solid fillet pass here to avoid overpainting that gradient with
+  // a flat corner colour.
+  if(inner && !gradient){
+    // inner fillet colour lookup: fallback to a neighbour's raw colour
+    // (used only when gradient is off — in gradient mode the wedge is
+    // part of the bilinear clip and this branch is skipped entirely).
+    const cornerCol = (cy, cx, fa, fb) => fa || fb;
     const filRad = (ay, ax, by, bx) =>
       r * Math.min(cellPresence(ay, ax), cellPresence(by, bx));
     for(let y=0;y<n;y++) for(let x=0;x<n;x++){
@@ -1630,14 +1673,16 @@ function updateAutoplayUI(){
 }
 
 // ========== beat-sync (audio-reactive morph) ==========
-// Requests the mic, runs an rAF loop on an AnalyserNode, and fires
-// tickAutoplay() on each detected onset in the bass band (bins 1..8,
-// ~0–700 Hz at 44.1 kHz — where kicks, claps, basslines live).
-// Each beat advances the current `autosrc` (fixed / morph / wild), so the
-// button behaves like a светомузыка trigger without dictating morph vs.
-// full regen. Sensitivity slider tunes the threshold multiplier.
+// Requests the mic and fires tickAutoplay() on each detected onset.
+// Onset = SPECTRAL FLUX peak — the sum of positive per-bin changes in the
+// frequency spectrum. This catches any sudden change regardless of band
+// (claps, hi-hats, vocals, kicks, bass). Crucial for phone-speaker music:
+// small speakers roll off the low end, so bass-only detection misses the
+// beat; spectral flux rides whatever frequencies the speaker CAN reproduce.
+// Threshold is adaptive — a running median of the last ~1s of flux values,
+// scaled by the sensitivity slider. Debounced by 120ms minimum between hits.
 let audioCtx=null, audioStream=null, audioAnalyser=null, audioRaf=null;
-let audioMean=0, audioLastOnset=0;
+let audioLastOnset=0;
 function beatSyncOn(){
   if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
     setStatus('mic API unavailable in this browser','err'); return;
@@ -1646,39 +1691,53 @@ function beatSyncOn(){
     audioStream = stream;
     const AC = window.AudioContext || window.webkitAudioContext;
     audioCtx = new AC();
-    // Some browsers start context suspended — resume on user gesture (the click).
     if(audioCtx.state==='suspended' && audioCtx.resume) audioCtx.resume().catch(()=>{});
     const src = audioCtx.createMediaStreamSource(stream);
     audioAnalyser = audioCtx.createAnalyser();
-    audioAnalyser.fftSize = 512;
-    audioAnalyser.smoothingTimeConstant = 0.35;
+    audioAnalyser.fftSize = 1024;
+    audioAnalyser.smoothingTimeConstant = 0.15; // low smoothing = sharper onsets
     src.connect(audioAnalyser);
-    const buf = new Uint8Array(audioAnalyser.frequencyBinCount);
-    audioMean = 0; audioLastOnset = 0;
+    const nBins = audioAnalyser.frequencyBinCount;
+    const buf = new Uint8Array(nBins);
+    const prev = new Uint8Array(nBins);
+    const histSize = 48; // ~0.8s at 60fps — recent flux memory for adaptive threshold
+    const hist = new Float32Array(histSize);
+    let histI = 0, histFilled = 0;
+    audioLastOnset = 0;
     const meter = document.getElementById('beatlvl');
     function tick(){
       if(!audioAnalyser){ return; }
       audioAnalyser.getByteFrequencyData(buf);
-      // bass energy = mean of bins 1..8, skipping bin 0 (DC)
-      let bass = 0; for(let i=1;i<9;i++) bass += buf[i]; bass /= 8;
-      // EMA — faster fall on silence, slower rise so a single kick pops out
-      audioMean = 0.92*audioMean + 0.08*bass;
-      if(meter) meter.style.setProperty('--lvl', Math.min(1, bass/140));
+      // spectral flux: sum of POSITIVE differences per bin (only rising energy)
+      let flux = 0, total = 0;
+      for(let i=1;i<nBins;i++){
+        const d = buf[i] - prev[i];
+        if(d > 0) flux += d;
+        total += buf[i];
+        prev[i] = buf[i];
+      }
+      // record into history ring
+      hist[histI] = flux;
+      histI = (histI+1) % histSize;
+      if(histFilled < histSize) histFilled++;
+      // adaptive threshold = mean of history window
+      let mean = 0;
+      for(let i=0;i<histFilled;i++) mean += hist[i];
+      mean /= Math.max(1, histFilled);
+      if(meter) meter.style.setProperty('--lvl', Math.min(1, flux/1200));
       const now = performance.now();
       const sens = +(document.getElementById('beatsens')?.value || 1.55);
-      // onset: bass exceeds EMA by sens×, above noise floor, debounced
-      if(bass > audioMean*sens && bass > 28 && now - audioLastOnset > 140){
+      // onset: flux spikes above recent mean×sens AND signal is above noise floor
+      if(flux > mean*sens && flux > 90 && total > 600 && now - audioLastOnset > 120){
         audioLastOnset = now;
         tickAutoplay();
-        document.body.classList.add('beat-flash');
-        setTimeout(()=>document.body.classList.remove('beat-flash'), 70);
       }
       audioRaf = requestAnimationFrame(tick);
     }
     tick();
     document.body.classList.add('beatsyncing');
     updateBeatUI();
-    setStatus('beat-sync ♪ mic listening', 'ok');
+    setStatus('beat-sync ♪ mic listening (spectral flux)', 'ok');
   }).catch(e=>{
     setStatus('mic denied: '+(e.message||e.name), 'err');
   });
@@ -1860,6 +1919,36 @@ document.getElementById('cv').addEventListener('click', e=>{
 });
 
 // ========== image → palette ==========
+// Bucket pixels into a 4-bit-per-channel quantization (4096 bins), sort by
+// count, and return the top K as hex strings — avoiding near-duplicates so
+// an image with a broad gradient still yields 8 *distinct* swatches.
+function _dominantColors(data, k){
+  const bins = new Map();
+  for(let i=0;i<data.length;i+=4){
+    if(data[i+3] < 80) continue;
+    const r = data[i], g = data[i+1], b = data[i+2];
+    const key = ((r>>4)<<8) | ((g>>4)<<4) | (b>>4);
+    const v = bins.get(key);
+    if(v){ v[0]+=r; v[1]+=g; v[2]+=b; v[3]++; }
+    else bins.set(key, [r,g,b,1]);
+  }
+  const sorted = [...bins.values()].sort((a,b)=>b[3]-a[3]);
+  const out = [];
+  const toHex = (r,g,b)=>'#'+[r,g,b].map(v=>('0'+v.toString(16)).slice(-2)).join('');
+  const dist = (h1,h2)=>{
+    const p1=[parseInt(h1.slice(1,3),16),parseInt(h1.slice(3,5),16),parseInt(h1.slice(5,7),16)];
+    const p2=[parseInt(h2.slice(1,3),16),parseInt(h2.slice(3,5),16),parseInt(h2.slice(5,7),16)];
+    return Math.abs(p1[0]-p2[0])+Math.abs(p1[1]-p2[1])+Math.abs(p1[2]-p2[2]);
+  };
+  for(const b of sorted){
+    if(out.length >= k) break;
+    const hex = toHex(Math.round(b[0]/b[3]), Math.round(b[1]/b[3]), Math.round(b[2]/b[3]));
+    if(out.some(h => dist(h, hex) < 36)) continue; // collapse near-duplicates
+    out.push(hex);
+  }
+  while(out.length < k) out.push(out[out.length-1] || '#808080');
+  return out;
+}
 function extractPaletteFromImage(file){
   return new Promise((resolve,reject)=>{
     const img = new Image();
@@ -1885,7 +1974,9 @@ function extractPaletteFromImage(file){
         const b = Math.round(data[i+2]/8)*8;
         pool.push(`rgb(${r},${g},${b})`);
       }
-      resolve({pool, thumbUrl: URL.createObjectURL(file), w: img.width, h: img.height});
+      // 8 dominant colours for the custom-picker row — user can see and tweak
+      const dominant = _dominantColors(data, 8);
+      resolve({pool, dominant, thumbUrl: URL.createObjectURL(file), w: img.width, h: img.height});
     };
     img.onerror = () => reject(new Error('image decode failed'));
     img.src = URL.createObjectURL(file);
@@ -1903,13 +1994,24 @@ async function loadImageFile(file){
   if(!file || !/^image\//.test(file.type||'')){ setStatus('not an image file','err'); return; }
   try {
     setStatus('extracting palette…');
-    const {pool, thumbUrl, w, h} = await extractPaletteFromImage(file);
+    const {pool, dominant, thumbUrl, w, h} = await extractPaletteFromImage(file);
     if(!pool.length){ setStatus('no opaque pixels in image','err'); return; }
     imagePalette = pool;
+    // Mirror the image's 8 dominant colours into the custom-picker row AND
+    // into customPalette — so the swatches shown below reflect what's on
+    // screen, and clicking into `custom` hands the user those same colours
+    // to tweak instead of snapping back to the hardcoded neon defaults.
+    if(dominant && dominant.length){
+      const inputs = document.querySelectorAll('#customColors input[type=color]');
+      dominant.forEach((hex, i) => {
+        customPalette[i] = hex;
+        if(inputs[i]) inputs[i].value = hex;
+      });
+    }
     showImagePreview(thumbUrl, pool.length, `${w}×${h}`);
     setSeg('palette','image');
     generate();
-    setStatus(`palette loaded · ${pool.length.toLocaleString()} samples from image`,'ok');
+    setStatus(`palette loaded · ${pool.length.toLocaleString()} samples · 8 swatches extracted`,'ok');
   } catch(e){ setStatus(`image load failed: ${e.message}`,'err'); }
 }
 function clearImagePalette(){
