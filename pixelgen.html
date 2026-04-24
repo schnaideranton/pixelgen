@@ -770,7 +770,7 @@ function generate(){
       const matrix = expandFd(fdMode, n, subset, cells);
       // deterministic per-pattern rng so coloured palettes don't flicker between renders
       rand = mulberry32((idx + 1) * 2654435761 | 0);
-      patterns.push({m:matrix, grid:colorize(matrix, palette, maxColors, bg, paletteMode)});
+      patterns.push({m:matrix, grid:colorize(matrix, palette, maxColors, bg, paletteMode), band:Math.floor(Math.random()*3)});
     }
     enumCursor = startCursor + total;
     if(isFinite(fullTotal) && enumCursor >= fullTotal) enumCursor = enumCursor % fullTotal;
@@ -785,11 +785,11 @@ function generate(){
       const h=patHash(m);
       if(dedup && hashes.has(h)) continue;
       hashes.add(h);
-      patterns.push({m,grid:colorize(m,palette,maxColors,bg,paletteMode)});
+      patterns.push({m,grid:colorize(m,palette,maxColors,bg,paletteMode), band:Math.floor(Math.random()*3)});
     }
     while(patterns.length<total){
       const m=genPattern(mode,n,fill);
-      patterns.push({m,grid:colorize(m,palette,maxColors,bg,paletteMode)});
+      patterns.push({m,grid:colorize(m,palette,maxColors,bg,paletteMode), band:Math.floor(Math.random()*3)});
     }
   }
 
@@ -894,40 +894,64 @@ if(typeof CanvasRenderingContext2D!=='undefined' && !CanvasRenderingContext2D.pr
 // non-integer CSS scale, those shared edges antialias on both sides and
 // produce a 1-px black hairline (bg shows through the partial-coverage
 // pixels). We overshoot the straight edges by _FB px into the neighbours,
-// so the seam gets overpainted. The arc itself is untouched — its curved
-// boundary is the only visible edge of the fillet.
+// so the seam gets overpainted. The DIAGONAL corner (1×1 square behind the
+// pinch vertex at the cell corner) is deliberately EXCLUDED — it sits in
+// the kitty-corner cell which may be empty and therefore has no source
+// pixels in the bilinear raster, so including it would leak black through
+// the clip. All four paths wind CLOCKWISE on screen; mixed winding would
+// make the nonzero fill rule cancel the bleed overlap with the active
+// neighbour's roundRect and punch a hole in the clip (that was the
+// previous regression — TR/BL were CCW, which subtracted from the union
+// and let the canvas bg through even in the PNG).
 const _FB = 1;
 // Path-only helpers (no beginPath / no fill). They append the wedge shape —
-// including the _FB bleed — to the caller's current path. Used both for
-// solid fillet fills AND for extending the bilinear-blend clip region so
-// the gradient flows seamlessly from an active cell into its fillet
-// without a colour step at the shared corner.
+// including the _FB bleed into the 2 orthogonal neighbours — to the
+// caller's current path. Used both for solid fillet fills AND for
+// extending the bilinear-blend clip so the gradient flows seamlessly
+// from an active cell into its fillet without a colour step at the
+// shared corner.
 function _filletTLPath(ctx,px,py,r){
-  ctx.moveTo(px+r, py-_FB);
-  ctx.arc(px+r, py+r, r, -Math.PI/2, Math.PI, true);     // arc: (px+r,py) → (px,py+r)
+  // CW traversal: top-bleed → arc (UL quadrant) → left-bleed → pinch at
+  // cell TL corner (px,py), excluding the diagonal 1×1 square.
+  ctx.moveTo(px+r,   py-_FB);
+  ctx.arc(px+r, py+r, r, -Math.PI/2, Math.PI, true);    // (px+r,py) → (px,py+r)
   ctx.lineTo(px-_FB, py+r);
-  ctx.lineTo(px-_FB, py-_FB);
+  ctx.lineTo(px-_FB, py);
+  ctx.lineTo(px,     py);
+  ctx.lineTo(px,     py-_FB);
   ctx.closePath();
 }
 function _filletTRPath(ctx,px,py,z,r){
-  ctx.moveTo(px+z-r, py-_FB);
-  ctx.arc(px+z-r, py+r, r, -Math.PI/2, 0, false);        // arc: (px+z-r,py) → (px+z,py+r)
+  // CW: pinch at cell TR corner → right-bleed → arc (UR quadrant, CCW
+  // visually = angle decreasing 0→-π/2) → top-bleed → back.
+  ctx.moveTo(px+z+_FB, py);
   ctx.lineTo(px+z+_FB, py+r);
-  ctx.lineTo(px+z+_FB, py-_FB);
+  ctx.arc(px+z-r, py+r, r, 0, -Math.PI/2, true);         // (px+z,py+r) → (px+z-r,py)
+  ctx.lineTo(px+z-r, py-_FB);
+  ctx.lineTo(px+z,   py-_FB);
+  ctx.lineTo(px+z,   py);
   ctx.closePath();
 }
 function _filletBLPath(ctx,px,py,z,r){
-  ctx.moveTo(px+r, py+z+_FB);
-  ctx.arc(px+r, py+z-r, r, Math.PI/2, Math.PI, false);   // arc: (px+r,py+z) → (px,py+z-r)
+  // CW: left-bleed → arc (BL quadrant, CCW visually = π→π/2) →
+  // bottom-bleed → pinch at cell BL corner.
+  ctx.moveTo(px-_FB, py+z);
   ctx.lineTo(px-_FB, py+z-r);
-  ctx.lineTo(px-_FB, py+z+_FB);
+  ctx.arc(px+r, py+z-r, r, Math.PI, Math.PI/2, true);    // (px,py+z-r) → (px+r,py+z)
+  ctx.lineTo(px+r, py+z+_FB);
+  ctx.lineTo(px,   py+z+_FB);
+  ctx.lineTo(px,   py+z);
   ctx.closePath();
 }
 function _filletBRPath(ctx,px,py,z,r){
+  // CW: bottom-bleed → arc (BR quadrant, CCW visually = π/2→0) →
+  // right-bleed → pinch at cell BR corner.
   ctx.moveTo(px+z-r, py+z+_FB);
-  ctx.arc(px+z-r, py+z-r, r, Math.PI/2, 0, true);        // arc: (px+z-r,py+z) → (px+z,py+z-r)
+  ctx.arc(px+z-r, py+z-r, r, Math.PI/2, 0, true);        // (px+z-r,py+z) → (px+z,py+z-r)
   ctx.lineTo(px+z+_FB, py+z-r);
-  ctx.lineTo(px+z+_FB, py+z+_FB);
+  ctx.lineTo(px+z+_FB, py+z);
+  ctx.lineTo(px+z,     py+z);
+  ctx.lineTo(px+z,     py+z+_FB);
   ctx.closePath();
 }
 function filletTL(ctx,px,py,r,col){
@@ -1577,14 +1601,23 @@ function _animateMorph(){
   _morphAnimRaf = requestAnimationFrame(frame);
 }
 
-function morphStep(){
+function morphStep(filter){
   if(!state || !state.patterns) return;
   const s=state, n=s.n;
   const fdMode = fdomainMode(s.mode);
   const cells  = fdomainCells(fdMode, n);
   const palette= getPalette(s.paletteMode, s.bg);
 
-  for(const p of s.patterns){
+  // If filter is provided (3-band dance), finalize any in-flight anim on
+  // ALL patterns first — so that patterns we're NOT re-morphing snap to
+  // their already-updated grid and don't re-animate from t=0 when the
+  // RAF restarts. Only filter-matching patterns will get fresh anim.
+  let touched = false;
+  for(let i=0; i<s.patterns.length; i++){
+    const p = s.patterns[i];
+    p.anim = null; // clear stale anim; will be set below if morphed
+    if(filter && !filter(p, i)) continue;
+    touched = true;
     const flips = 1 + Math.floor(Math.random()*2); // 1 or 2
     const oldM    = p.m.map(r=>r.slice());
     const oldGrid = p.grid.map(r=>r.slice());
@@ -1633,7 +1666,8 @@ function morphStep(){
     }
     p.anim = (spawn.length || die.length) ? { spawn, die } : null;
   }
-  _animateMorph();
+  if(touched) _animateMorph();
+  else render(); // filter matched no patterns → just finalize stale anim
 }
 
 // ========== autoplay ==========
@@ -1673,16 +1707,25 @@ function updateAutoplayUI(){
 }
 
 // ========== beat-sync (audio-reactive morph) ==========
-// Requests the mic and fires tickAutoplay() on each detected onset.
-// Onset = SPECTRAL FLUX peak — the sum of positive per-bin changes in the
-// frequency spectrum. This catches any sudden change regardless of band
-// (claps, hi-hats, vocals, kicks, bass). Crucial for phone-speaker music:
-// small speakers roll off the low end, so bass-only detection misses the
-// beat; spectral flux rides whatever frequencies the speaker CAN reproduce.
-// Threshold is adaptive — a running median of the last ~1s of flux values,
-// scaled by the sensitivity slider. Debounced by 120ms minimum between hits.
+// Splits the spectrum into 3 bands — low / mid / high — and runs an
+// independent spectral-flux onset detector on each. Each pattern on the
+// grid is tagged with a random band (0/1/2) at generate-time, so on a
+// low-band onset only ~1/3 of the symbols morph, on a mid-band onset
+// another ~1/3, and on a high-band onset the remaining ~1/3. The result
+// is a "dance" where different symbols react to different instruments:
+// kick → bass-tagged symbols jump, snare/synth → mid, hi-hat → high.
+//
+// Spectral flux = Σ max(0, buf[i] - prev[i]) over band bins. Threshold
+// is adaptive (running mean of last ~0.8 s per band), scaled by the
+// sensitivity slider. Absolute min-flux per band is proportional to
+// band width so thin bands don't false-trigger on noise.
+//
+// Non-morph sources: if playback source is 'fixed' or 'wild', 3-band
+// dance isn't meaningful (whole grid regenerates) — we fall back to
+// ANY-band onset firing tickAutoplay(), debounced globally by 120 ms.
 let audioCtx=null, audioStream=null, audioAnalyser=null, audioRaf=null;
 let audioLastOnset=0;
+// Band bin ranges are computed from fftSize; see setup below.
 function beatSyncOn(){
   if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
     setStatus('mic API unavailable in this browser','err'); return;
@@ -1700,44 +1743,83 @@ function beatSyncOn(){
     const nBins = audioAnalyser.frequencyBinCount;
     const buf = new Uint8Array(nBins);
     const prev = new Uint8Array(nBins);
-    const histSize = 48; // ~0.8s at 60fps — recent flux memory for adaptive threshold
-    const hist = new Float32Array(histSize);
-    let histI = 0, histFilled = 0;
+    // Band ranges (bin indices, end-exclusive). With fftSize=1024 @ 48kHz,
+    // each bin ≈ 46.9 Hz: low 47–469 Hz, mid 469–1875 Hz, high 1875 Hz+.
+    // Skip bin 0 (DC). Tuned so phone speakers (weak bass) still fire
+    // on the mid/high bands when low is missing.
+    const B = [
+      { lo: 1,  hi: Math.min(nBins, 10) },   // ~47–469 Hz  (kicks, sub, low toms)
+      { lo: 10, hi: Math.min(nBins, 40) },   // ~469–1875 Hz (snare body, vocals, mids)
+      { lo: 40, hi: nBins }                  // ~1875 Hz+    (hats, cymbals, sibilants)
+    ];
+    const histSize = 48; // ~0.8s at 60fps
+    // Per-band state: hist ring, lastOnset time.
+    // Minimum onset flux is a flat floor for silent gaps (noise rejection).
+    // Band-width scaling is NOT applied — adaptive mean×sens already
+    // auto-balances across bands. A width-proportional floor would starve
+    // quiet music (soft hi-hats can't reach a 300+ flux threshold) while
+    // loud bass easily clears a 20-flux floor. The adaptive threshold is
+    // what discriminates real onsets from steady-state.
+    const bandState = B.map(b => ({
+      hist: new Float32Array(histSize),
+      histI: 0,
+      histFilled: 0,
+      lastOnset: 0,
+      width: b.hi - b.lo,
+      minFlux: 15,
+      minTotal: 40
+    }));
     audioLastOnset = 0;
     const meter = document.getElementById('beatlvl');
     function tick(){
       if(!audioAnalyser){ return; }
       audioAnalyser.getByteFrequencyData(buf);
-      // spectral flux: sum of POSITIVE differences per bin (only rising energy)
-      let flux = 0, total = 0;
-      for(let i=1;i<nBins;i++){
-        const d = buf[i] - prev[i];
-        if(d > 0) flux += d;
-        total += buf[i];
-        prev[i] = buf[i];
-      }
-      // record into history ring
-      hist[histI] = flux;
-      histI = (histI+1) % histSize;
-      if(histFilled < histSize) histFilled++;
-      // adaptive threshold = mean of history window
-      let mean = 0;
-      for(let i=0;i<histFilled;i++) mean += hist[i];
-      mean /= Math.max(1, histFilled);
-      if(meter) meter.style.setProperty('--lvl', Math.min(1, flux/1200));
       const now = performance.now();
       const sens = +(document.getElementById('beatsens')?.value || 1.55);
-      // onset: flux spikes above recent mean×sens AND signal is above noise floor
-      if(flux > mean*sens && flux > 90 && total > 600 && now - audioLastOnset > 120){
-        audioLastOnset = now;
-        tickAutoplay();
+      const autosrc = getVal('autosrc');
+      let maxNormFlux = 0;
+      for(let b=0; b<B.length; b++){
+        const { lo, hi } = B[b];
+        const st = bandState[b];
+        let flux = 0, total = 0;
+        for(let i=lo; i<hi; i++){
+          const d = buf[i] - prev[i];
+          if(d > 0) flux += d;
+          total += buf[i];
+        }
+        // adaptive threshold
+        st.hist[st.histI] = flux;
+        st.histI = (st.histI+1) % histSize;
+        if(st.histFilled < histSize) st.histFilled++;
+        let mean = 0;
+        for(let i=0;i<st.histFilled;i++) mean += st.hist[i];
+        mean /= Math.max(1, st.histFilled);
+        // meter ride: per-band normalized flux (flux over width)
+        const norm = flux / Math.max(1, st.width) / 6; // empirical scale
+        if(norm > maxNormFlux) maxNormFlux = norm;
+        // onset detection
+        if(flux > mean*sens && flux > st.minFlux && total > st.minTotal && now - st.lastOnset > 120){
+          st.lastOnset = now;
+          // morph source → per-band morph; other sources → any-band =
+          // global onset (with a global 120ms debounce so all 3 bands
+          // firing in the same frame don't triple-regen).
+          if(autosrc === 'morph' && state && state.patterns){
+            morphStep((p) => p.band === b);
+          } else if(now - audioLastOnset > 120){
+            audioLastOnset = now;
+            tickAutoplay();
+          }
+        }
       }
+      // copy current spectrum to prev for next frame's diff
+      for(let i=0;i<nBins;i++) prev[i] = buf[i];
+      if(meter) meter.style.setProperty('--lvl', Math.min(1, maxNormFlux));
       audioRaf = requestAnimationFrame(tick);
     }
     tick();
     document.body.classList.add('beatsyncing');
     updateBeatUI();
-    setStatus('beat-sync ♪ mic listening (spectral flux)', 'ok');
+    setStatus('beat-sync ♪ mic listening · 3-band dance (low/mid/high)', 'ok');
   }).catch(e=>{
     setStatus('mic denied: '+(e.message||e.name), 'err');
   });
