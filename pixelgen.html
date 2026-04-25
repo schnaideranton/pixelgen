@@ -844,39 +844,70 @@ function generate(){
 
   if(mode==='carpet' && layout==='grid'){
     // ── carpet · Persian-rug layout ────────────────────────────────────
-    // Concentric Chebyshev-distance bands radiate from canvas centre. Each
-    // band picks its own (sub-mode, palette subset, mcol). 4-way mirror:
-    // cells with the same (mr, mc) mirror class share a single cached
-    // pattern, flipped H/V/HV depending on which quadrant they sit in.
-    // When height runs out before width, rings keep expanding sideways —
-    // that's just a natural consequence of square-ring Chebyshev geometry.
-    // Regenerate refreshes patterns inside the same carpet structure.
+    // Concentric Chebyshev-distance bands radiate from canvas centre. 4-way
+    // mirror: cells with same (mr, mc) mirror class get same pattern, flipped
+    // H/V/HV per quadrant. When height runs out before width, rings keep
+    // spreading sideways — natural Chebyshev behaviour.
+    //
+    // Within each band, alternation: 2–3 variants × a rhythm pattern. Each
+    // variant has its own (sub-mode, palette slice, mcol). Position along
+    // ring picks the variant via rhythm[pos % rhythm.length], so a single
+    // ring reads as e.g. "AABB AABB" or "ABC ABC" instead of one motif.
+    // This is what gives Persian rugs their woven, rhythmic character —
+    // not just concentric stripes but stripes-within-stripes.
+    //
+    // Regenerate refreshes variants/rhythms inside the same carpet structure.
     const halfR = (rows-1)/2, halfC = (cols-1)/2;
     const maxRing = Math.max(halfR, halfC, 0.5);
     const SUB_MODES = ['emblem','radial','quad','glyph','h-sym','v-sym','random'];
+    const RHYTHMS_2 = [
+      [0,1],          // ABAB · steady tick
+      [0,0,1],        // AAB · long-short
+      [0,0,1,1],      // AABB · pair-pair
+      [0,1,1,0],      // ABBA · palindrome
+      [0,0,0,1],      // AAAB · sparse accent
+      [0,1,0,0,1],    // ABAAB · 5-beat
+    ];
+    const RHYTHMS_3 = [
+      [0,1,2],        // ABC · staircase
+      [0,0,1,2],      // AABC · double-A
+      [0,1,2,1],      // ABCB · pendulum
+      [0,1,0,2],      // ABAC · A as base
+      [0,1,2,2,1,0],  // ABCCBA · full palindrome
+      [0,0,1,2,2,1],  // AABCCB · paired palindrome
+    ];
     // 2–4 bands depending on grid size; tiny grids don't need many bands
     const BAND_COUNT = Math.max(2, Math.min(4, Math.ceil(maxRing/2)));
     const bandSpecs = [];
     for(let b=0; b<BAND_COUNT; b++){
-      // each band gets a random palette slice — gives the "different colour
-      // theme per ring" look that's archetypal for Persian carpets.
-      let bandPalette = null;
-      if(palette && palette.length){
-        const len = palette.length;
-        const off = Math.floor(R()*len);
-        const size = Math.max(1, Math.min(len, 1+Math.floor(R()*4)));
-        const arr = [];
-        for(let i=0;i<size;i++) arr.push(palette[(off+i)%len]);
-        bandPalette = arr;
+      // 2 or 3 variants per band — 3 gives richer rhythm but eats palette;
+      // bias toward 2 so palette colours aren't spread thinner than mcol can use.
+      const variantCount = R()<0.55 ? 2 : 3;
+      const rhythm = (variantCount===2 ? RHYTHMS_2 : RHYTHMS_3)[
+        Math.floor(R() * (variantCount===2 ? RHYTHMS_2.length : RHYTHMS_3.length))
+      ];
+      const variants = [];
+      for(let v=0; v<variantCount; v++){
+        let vpal = null;
+        if(palette && palette.length){
+          const len = palette.length;
+          const off = Math.floor(R()*len);
+          const size = Math.max(1, Math.min(len, 1+Math.floor(R()*4)));
+          const arr = [];
+          for(let i=0;i<size;i++) arr.push(palette[(off+i)%len]);
+          vpal = arr;
+        }
+        const cap = Math.max(1, maxColors||1);
+        variants.push({
+          mode: SUB_MODES[Math.floor(R()*SUB_MODES.length)],
+          mcol: Math.max(1, Math.min(cap, 1+Math.floor(R()*Math.min(4,cap)))),
+          pal: vpal,
+        });
       }
-      const cap = Math.max(1, maxColors||1);
-      bandSpecs.push({
-        mode: SUB_MODES[Math.floor(R()*SUB_MODES.length)],
-        mcol: Math.max(1, Math.min(cap, 1+Math.floor(R()*Math.min(4,cap)))),
-        pal: bandPalette,
-      });
+      bandSpecs.push({rhythm, variants});
     }
-    // mirror-class cache: 4 quadrant-mates share one generated pattern
+    // cache by (bandIdx, variantIdx) — every cell using same band+variant
+    // shares one generated pattern (this is what makes the rhythm "regular")
     const cache = Object.create(null);
     const flipMat = (mat, fh, fv) => {
       const sz = mat.length;
@@ -892,18 +923,22 @@ function generate(){
     };
     for(let r=0;r<rows;r++){
       for(let c=0;c<cols;c++){
-        const mr = Math.min(r, rows-1-r);
-        const mc = Math.min(c, cols-1-c);
         const dr = Math.abs(r - halfR);
         const dc = Math.abs(c - halfC);
         const ringD = Math.max(dr, dc);
         let bandIdx = Math.floor((ringD/maxRing) * BAND_COUNT);
         if(bandIdx >= BAND_COUNT) bandIdx = BAND_COUNT-1;
-        const key = mr+','+mc+','+bandIdx;
+        const band = bandSpecs[bandIdx];
+        // Position along ring (mirror-invariant): minoff = 0 at axis, ringD at
+        // corner. Using min(dr,dc) means the rhythm runs from axis outward to
+        // each of the 4 corners identically — preserves 4-way mirror symmetry.
+        const minoff = Math.floor(Math.min(dr, dc));
+        const variantIdx = band.rhythm[minoff % band.rhythm.length];
+        const key = bandIdx+','+variantIdx;
         if(!cache[key]){
-          const band = bandSpecs[bandIdx];
-          const m0 = genPattern(band.mode, n, fill);
-          const grid0 = colorize(m0, band.pal, band.mcol, bg, paletteMode);
+          const v = band.variants[variantIdx];
+          const m0 = genPattern(v.mode, n, fill);
+          const grid0 = colorize(m0, v.pal, v.mcol, bg, paletteMode);
           cache[key] = {m:m0, grid:grid0};
         }
         const cached = cache[key];
