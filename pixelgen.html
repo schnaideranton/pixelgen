@@ -254,6 +254,7 @@ body.fs{overflow:hidden!important;position:fixed;width:100%;height:100%}
         <button data-v="radial">radial</button>
         <button data-v="emblem">emblem</button>
         <button data-v="glyph">glyph</button>
+        <button data-v="carpet">carpet · rug</button>
       </div>
     </div>
 
@@ -317,15 +318,6 @@ body.fs{overflow:hidden!important;position:fixed;width:100%;height:100%}
       </div>
       <div class="row"><label>blend</label>
         <div class="seg" id="gradblend" data-val="0" style="flex:1.2">
-          <button data-v="0" class="on">off</button>
-          <button data-v="1">on</button>
-        </div>
-      </div>
-      <!-- inflate: post-render shading via per-pixel distance transform.
-           Each filled pixel is shaded brighter the further it is from the
-           cluster boundary, giving a "puffy sticker" / inflated-balloon look. -->
-      <div class="row"><label>inflate</label>
-        <div class="seg" id="inflate" data-val="0" style="flex:1.2">
           <button data-v="0" class="on">off</button>
           <button data-v="1">on</button>
         </div>
@@ -587,7 +579,10 @@ function density(m){let c=0;const n=m.length;for(const r of m)for(const v of r)i
 
 function genPattern(mode,n,fillPct){
   const p=fillPct/100;
-  const fn = mode==='hybrid' ? MODES[pick(HYBRID_BAG)] : MODES[mode];
+  // Fallback: if mode isn't a registered atomic generator (e.g. 'carpet',
+  // which is a layout mode handled in generate()), substitute hybrid so
+  // any path that calls genPattern directly still produces output.
+  const fn = mode==='hybrid' ? MODES[pick(HYBRID_BAG)] : (MODES[mode] || MODES[pick(HYBRID_BAG)]);
   let best=null,bestScore=-Infinity;
   for(let i=0;i<8;i++){
     const m=fn(n,p);
@@ -823,6 +818,14 @@ function generate(){
   } else {
     effPscale=pscale;
     effSpacing=spacing;
+    // carpet mode forces gap = one pixel-cell wide. The gaps between blocks
+    // then read as "the same fabric" as the patterns themselves — that's
+    // what makes a Persian rug feel woven rather than gridded. We also
+    // reflect this in the spacing slider so the UI doesn't lie.
+    if(mode==='carpet'){
+      effSpacing = effPscale;
+      setNum('spacing', effSpacing);
+    }
     const block=n*effPscale, stride=block+effSpacing;
     cols=Math.max(1,Math.floor((cw-2*margin+effSpacing)/stride));
     rows=Math.max(1,Math.floor((ch-2*margin+effSpacing)/stride));
@@ -839,7 +842,79 @@ function generate(){
   const patterns=[];
   let enumInfo=null;
 
-  if(enumOn){
+  if(mode==='carpet' && layout==='grid'){
+    // ── carpet · Persian-rug layout ────────────────────────────────────
+    // Concentric Chebyshev-distance bands radiate from canvas centre. Each
+    // band picks its own (sub-mode, palette subset, mcol). 4-way mirror:
+    // cells with the same (mr, mc) mirror class share a single cached
+    // pattern, flipped H/V/HV depending on which quadrant they sit in.
+    // When height runs out before width, rings keep expanding sideways —
+    // that's just a natural consequence of square-ring Chebyshev geometry.
+    // Regenerate refreshes patterns inside the same carpet structure.
+    const halfR = (rows-1)/2, halfC = (cols-1)/2;
+    const maxRing = Math.max(halfR, halfC, 0.5);
+    const SUB_MODES = ['emblem','radial','quad','glyph','h-sym','v-sym','random'];
+    // 2–4 bands depending on grid size; tiny grids don't need many bands
+    const BAND_COUNT = Math.max(2, Math.min(4, Math.ceil(maxRing/2)));
+    const bandSpecs = [];
+    for(let b=0; b<BAND_COUNT; b++){
+      // each band gets a random palette slice — gives the "different colour
+      // theme per ring" look that's archetypal for Persian carpets.
+      let bandPalette = null;
+      if(palette && palette.length){
+        const len = palette.length;
+        const off = Math.floor(R()*len);
+        const size = Math.max(1, Math.min(len, 1+Math.floor(R()*4)));
+        const arr = [];
+        for(let i=0;i<size;i++) arr.push(palette[(off+i)%len]);
+        bandPalette = arr;
+      }
+      const cap = Math.max(1, maxColors||1);
+      bandSpecs.push({
+        mode: SUB_MODES[Math.floor(R()*SUB_MODES.length)],
+        mcol: Math.max(1, Math.min(cap, 1+Math.floor(R()*Math.min(4,cap)))),
+        pal: bandPalette,
+      });
+    }
+    // mirror-class cache: 4 quadrant-mates share one generated pattern
+    const cache = Object.create(null);
+    const flipMat = (mat, fh, fv) => {
+      const sz = mat.length;
+      const out = Array.from({length:sz},()=>Array(sz).fill(null));
+      for(let y=0;y<sz;y++){
+        for(let x=0;x<sz;x++){
+          const sy = fv ? sz-1-y : y;
+          const sx = fh ? sz-1-x : x;
+          out[y][x] = mat[sy][sx];
+        }
+      }
+      return out;
+    };
+    for(let r=0;r<rows;r++){
+      for(let c=0;c<cols;c++){
+        const mr = Math.min(r, rows-1-r);
+        const mc = Math.min(c, cols-1-c);
+        const dr = Math.abs(r - halfR);
+        const dc = Math.abs(c - halfC);
+        const ringD = Math.max(dr, dc);
+        let bandIdx = Math.floor((ringD/maxRing) * BAND_COUNT);
+        if(bandIdx >= BAND_COUNT) bandIdx = BAND_COUNT-1;
+        const key = mr+','+mc+','+bandIdx;
+        if(!cache[key]){
+          const band = bandSpecs[bandIdx];
+          const m0 = genPattern(band.mode, n, fill);
+          const grid0 = colorize(m0, band.pal, band.mcol, bg, paletteMode);
+          cache[key] = {m:m0, grid:grid0};
+        }
+        const cached = cache[key];
+        const flipH = c > halfC;
+        const flipV = r > halfR;
+        const m = (flipH || flipV) ? flipMat(cached.m, flipH, flipV) : cached.m;
+        const grid = (flipH || flipV) ? flipMat(cached.grid, flipH, flipV) : cached.grid;
+        patterns.push({m, grid, band: bandIdx});
+      }
+    }
+  } else if(enumOn){
     // enum sweep — systematic, deterministic
     const fdMode = fdomainMode(mode);
     const cells = fdomainCells(fdMode, n);
@@ -884,8 +959,7 @@ function generate(){
   const outerRound = getVal('outer')==='1';
   const innerRound = getVal('inner')==='1';
   const gradBlend  = getVal('gradblend')==='1';
-  const inflate    = getVal('inflate')==='1';
-  state={cw,ch,margin,bg,n,pscale:effPscale,spacing:effSpacing,layout,offsetX,offsetY,mode,fill,paletteMode,maxColors,cols,rows,patterns,seed,enumInfo,outerRound,innerRound,gradBlend,inflate};
+  state={cw,ch,margin,bg,n,pscale:effPscale,spacing:effSpacing,layout,offsetX,offsetY,mode,fill,paletteMode,maxColors,cols,rows,patterns,seed,enumInfo,outerRound,innerRound,gradBlend};
   render();
   document.getElementById('sgrid').textContent=`${cols}×${rows}`;
   document.getElementById('spatt').textContent=patterns.length;
@@ -1357,104 +1431,7 @@ function render(t){
       drawPatternToCtx(ctx, p.m, p.grid, s.n, s.pscale, x0, y0, baseOpts);
     }
   }
-  // Inflate is a post-process: read back the canvas bitmap, run a distance
-  // transform on the filled pixels (anything that isn't bg), and shade as
-  // if each connected blob were a balloon. Skipped during morph animation
-  // for performance — re-runs naturally on the final frame.
-  if(s.inflate && !animActive){
-    applyInflate(ctx, s.cw, s.ch, s.bg, s.pscale);
-  }
   fitCanvas();
-}
-
-// ========== inflate (puffy 2.5D shading) ==========
-// Per-pixel distance transform on the canvas bitmap, then shade each filled
-// pixel by treating its distance-from-edge as height on a sphere. Cells
-// don't need clustering — we use a fixed roll-off radius (~0.55 × pscale).
-// Pixels within that radius from any boundary get full puff curve; deeper
-// pixels are clamped at full bright. This means small symbols puff less
-// than large ones, which is physically what an inflating balloon does.
-function applyInflate(ctx, W, H, bg, pscale){
-  const img = ctx.getImageData(0, 0, W, H);
-  const data = img.data;
-  const total = W * H;
-  // bg test: a pixel is "filled" if alpha > 0. Canvas was clearRect'd so all
-  // non-painted pixels have alpha=0 — easy and palette-independent.
-  // Two-pass 3-4 chamfer distance transform (integer, fast). Distance is
-  // measured in tenths of pixel units (3 = 1 step orth, 4 = 1 step diag,
-  // ratio 4/3 ≈ √2 = 1.414). Cap at maxR*3 to keep it small.
-  const maxR  = Math.max(2, Math.round(pscale * 0.55));
-  const cap   = maxR * 3;             // chamfer units to clamp at
-  const dist  = new Uint16Array(total);
-  // initialize: empty pixels = 0 distance, filled pixels = cap (will shrink)
-  for(let i=0;i<total;i++){
-    dist[i] = data[i*4+3] > 16 ? cap : 0;
-  }
-  // forward pass
-  for(let y=0;y<H;y++){
-    const row = y*W;
-    for(let x=0;x<W;x++){
-      const idx = row + x;
-      if(dist[idx]===0) continue;
-      let d = dist[idx];
-      if(x>0)         d = Math.min(d, dist[idx-1] + 3);
-      if(y>0)         d = Math.min(d, dist[idx-W] + 3);
-      if(x>0 && y>0)  d = Math.min(d, dist[idx-W-1] + 4);
-      if(x<W-1 && y>0) d = Math.min(d, dist[idx-W+1] + 4);
-      dist[idx] = d;
-    }
-  }
-  // backward pass
-  for(let y=H-1;y>=0;y--){
-    const row = y*W;
-    for(let x=W-1;x>=0;x--){
-      const idx = row + x;
-      if(dist[idx]===0) continue;
-      let d = dist[idx];
-      if(x<W-1)         d = Math.min(d, dist[idx+1] + 3);
-      if(y<H-1)         d = Math.min(d, dist[idx+W] + 3);
-      if(x<W-1 && y<H-1) d = Math.min(d, dist[idx+W+1] + 4);
-      if(x>0 && y<H-1)  d = Math.min(d, dist[idx+W-1] + 4);
-      dist[idx] = d;
-    }
-  }
-  // Shade. The roll-off is in PIXELS, so convert back: dist is chamfer ×3
-  // for orth steps, so pixel-distance ≈ dist / 3.
-  // Shading curve: t = clamp(d/maxR, 0..1), z = sqrt(1 - (1-t)²) (sphere
-  // height normalized 0..1). Brightness multiplier in [edge .. center].
-  // Add a top-left highlight via height-gradient (cheap finite-difference).
-  const edgeMul   = 0.42;  // how dark the silhouette edge gets
-  const centerMul = 1.10;  // how bright the apex gets (slightly hot)
-  const specStr   = 0.55;  // top-left highlight strength
-  const px = new Float32Array(total);
-  // build normalized-puff height field z[i] (only for filled pixels)
-  for(let i=0;i<total;i++){
-    if(dist[i]===0) continue;
-    const t = Math.min(1, (dist[i]/3) / maxR);
-    px[i] = Math.sqrt(Math.max(0, 1 - (1-t)*(1-t)));
-  }
-  for(let y=0;y<H;y++){
-    const row = y*W;
-    for(let x=0;x<W;x++){
-      const idx = row + x;
-      if(dist[idx]===0) continue;
-      const z = px[idx];
-      // gradient (∂z/∂x, ∂z/∂y) → pseudo-normal for top-left light.
-      // Light direction: (-0.55, -0.55, 0.62) normalized — over-the-shoulder
-      // glance from upper-left, classic balloon highlight position.
-      const dzx = (x<W-1 ? px[idx+1] : z) - (x>0 ? px[idx-1] : z);
-      const dzy = (y<H-1 ? px[idx+W] : z) - (y>0 ? px[idx-W] : z);
-      // crude lambertian: surface normal (-dzx,-dzy,1), light (-.55,-.55,.62)
-      // unnormalized dot: 0.55*dzx + 0.55*dzy + 0.62
-      const lam = Math.max(0, 0.55*dzx + 0.55*dzy + 0.62);
-      const mul = edgeMul + (centerMul - edgeMul) * z + specStr * lam * z;
-      const off = idx*4;
-      data[off]   = Math.min(255, data[off]   * mul);
-      data[off+1] = Math.min(255, data[off+1] * mul);
-      data[off+2] = Math.min(255, data[off+2] * mul);
-    }
-  }
-  ctx.putImageData(img, 0, 0);
 }
 
 function fitCanvas(){
@@ -2388,14 +2365,13 @@ document.getElementById('fsExit').addEventListener('click',toggleFullscreen);
 document.getElementById('fsRegen').addEventListener('click',generate);
 document.getElementById('fsRandom').addEventListener('click',generateWild);
 // surface toggles → immediate re-render without regenerating patterns
-['outer','inner','gradblend','inflate'].forEach(id=>{
+['outer','inner','gradblend'].forEach(id=>{
   document.getElementById(id).addEventListener('click',e=>{
     if(e.target.tagName!=='BUTTON'||!state) return;
     const v=e.target.dataset.v==='1';
     if(id==='outer') state.outerRound=v;
     if(id==='inner') state.innerRound=v;
     if(id==='gradblend') state.gradBlend=v;
-    if(id==='inflate') state.inflate=v;
     render();
   });
 });
