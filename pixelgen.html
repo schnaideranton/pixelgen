@@ -223,15 +223,13 @@ body.fs{overflow:hidden!important;position:fixed;width:100%;height:100%}
           <button data-v="single">single · big</button>
         </div>
       </div>
-      <!-- hidden: width/height/margin/fit are auto-computed.
-           cw/ch follow viewport (always fit-to-screen).
-           margin is derived from spacing (edge gap = inter-cell gap). -->
+      <!-- hidden: width/height/margin are auto-computed each generate().
+           cw/ch follow viewport, margin = spacing. fit-to-screen is always on
+           — no toggle, no UI clutter. -->
       <input type="hidden" id="cw" value="1600">
       <input type="hidden" id="ch" value="1600">
       <input type="hidden" id="margin" value="0">
-      <div class="seg" id="fit" data-val="1" hidden>
-        <button data-v="1" class="on">on</button>
-      </div>
+      <input type="hidden" id="fit" value="1">
     </div>
 
     <div class="group">
@@ -239,6 +237,10 @@ body.fs{overflow:hidden!important;position:fixed;width:100%;height:100%}
       <div class="row"><label>cells</label><input type="range" id="psize_r" min="3" max="20" value="5" step="1"><input type="text" id="psize" value="5×5" inputmode="numeric" autocomplete="off" style="width:52px;background:#151515;color:#fff;border:1px solid #252525;padding:3px 6px;font-family:inherit;font-size:11px;text-align:right"></div>
       <div class="row"><label>pixel scale</label><input type="range" id="pscale_r" min="2" max="60" value="10" step="1"><input type="number" id="pscale" value="10" min="2" max="60" style="width:52px"></div>
       <div class="row"><label>spacing</label><input type="range" id="spacing_r" min="0" max="100" value="6" step="1"><input type="number" id="spacing" value="6" min="0" max="100" style="width:52px"></div>
+      <!-- fill % lives with the geometry parameters because cells/scale/spacing
+           and fill all describe the same thing — how dense the canvas reads.
+           Removed the separate "density" label since it was a one-row group. -->
+      <div class="row"><label>fill</label><input type="range" id="fill" min="10" max="85" value="42"><span class="val" id="fillv">42</span></div>
     </div>
 
     <div class="group">
@@ -253,11 +255,6 @@ body.fs{overflow:hidden!important;position:fixed;width:100%;height:100%}
         <button data-v="emblem">emblem</button>
         <button data-v="glyph">glyph</button>
       </div>
-    </div>
-
-    <div class="group">
-      <div class="group-label">density</div>
-      <div class="row"><label>fill %</label><input type="range" id="fill" min="10" max="85" value="42"><span class="val" id="fillv">42</span></div>
     </div>
 
     <div class="group">
@@ -324,17 +321,23 @@ body.fs{overflow:hidden!important;position:fixed;width:100%;height:100%}
           <button data-v="1">on</button>
         </div>
       </div>
+      <!-- inflate: post-render shading via per-pixel distance transform.
+           Each filled pixel is shaded brighter the further it is from the
+           cluster boundary, giving a "puffy sticker" / inflated-balloon look. -->
+      <div class="row"><label>inflate</label>
+        <div class="seg" id="inflate" data-val="0" style="flex:1.2">
+          <button data-v="0" class="on">off</button>
+          <button data-v="1">on</button>
+        </div>
+      </div>
     </div>
 
     <div class="group">
       <div class="group-label">behavior</div>
-      <div class="row"><label>no duplicates</label>
-        <div class="seg" id="dedup" data-val="1" style="flex:1.2">
-          <button data-v="0">off</button>
-          <button data-v="1" class="on">on</button>
-        </div>
-      </div>
-      <div class="row"><label>sweep</label>
+      <!-- no-duplicates is always on (we never want repeats inside one canvas).
+           Hidden anchor preserves the existing dedup read in generate(). -->
+      <input type="hidden" id="dedup" data-val="1" value="1">
+      <div class="row"><label>cycle</label>
         <div class="seg" id="enum" data-val="0" style="flex:1.2">
           <button data-v="0" class="on">off</button>
           <button data-v="1">on</button>
@@ -347,7 +350,7 @@ body.fs{overflow:hidden!important;position:fixed;width:100%;height:100%}
       <!-- seed is auto-randomized each generate(); current value is shown in
            the top bar so a memorable canvas can be screenshot-captured. -->
       <input type="hidden" id="seed" value="0">
-      <button id="enumrestart" class="enum-restart">↻ restart sweep</button>
+      <button id="enumrestart" class="enum-restart">↻ restart cycle</button>
     </div>
 
     <div class="group">
@@ -881,7 +884,8 @@ function generate(){
   const outerRound = getVal('outer')==='1';
   const innerRound = getVal('inner')==='1';
   const gradBlend  = getVal('gradblend')==='1';
-  state={cw,ch,margin,bg,n,pscale:effPscale,spacing:effSpacing,layout,offsetX,offsetY,mode,fill,paletteMode,maxColors,cols,rows,patterns,seed,enumInfo,outerRound,innerRound,gradBlend};
+  const inflate    = getVal('inflate')==='1';
+  state={cw,ch,margin,bg,n,pscale:effPscale,spacing:effSpacing,layout,offsetX,offsetY,mode,fill,paletteMode,maxColors,cols,rows,patterns,seed,enumInfo,outerRound,innerRound,gradBlend,inflate};
   render();
   document.getElementById('sgrid').textContent=`${cols}×${rows}`;
   document.getElementById('spatt').textContent=patterns.length;
@@ -910,22 +914,28 @@ function syncEnumSlider(info){
   }
 }
 
+// "full random" button — the big-bang shuffle. Touches EVERY parameter
+// including geometry (cells, pixel scale, spacing). Used for the kaleidoscope
+// surprise on demand. Does NOT touch bg (user-owned).
 function generateWild(){
-  // full-random: PRESERVE the user-owned geometry & surface settings the user
-  // tuned (cells, pscale, spacing, outer-round, inner-round, blend, layout,
-  // bg) — those define the look. SHUFFLE the dice settings: pattern mode
-  // (across all 8 families), palette, fill density, colours-per-symbol,
-  // dedup. This way pressing "full random" feels like spinning a kaleidoscope
-  // inside the structure you already shaped, not blowing it up.
   const ri = n => Math.floor(Math.random()*n);
   const p = a => a[ri(a.length)];
 
-  // mode: all 8 families equal-weight + extra hybrid weight (it pulls from
-  // every family, the most "varied" choice).
+  // pattern size: integer 3–20, biased toward 5–9 so wild mode mostly stays readable
+  const pSize = p([3,4,5,5,5,6,7,7,8,9,10,11,13,16,20]);
+  setNum('psize', pSize);
+  const pScale = 4 + ri(18);
+  setNum('pscale', pScale);
+  const block = pSize * pScale;
+  // spacing floor = ⌈block/3⌉, ceiling ~60% of block — gaps always read clearly
+  const minSp = Math.max(3, Math.ceil(block / 3));
+  const maxSp = Math.max(minSp + 4, Math.ceil(block * 0.6));
+  const sp = minSp + ri(maxSp - minSp + 1);
+  setNum('spacing', sp);
+
+  // mode: all 8 families equal-weight + extra hybrid weight
   setSeg('mode', p(['random','hybrid','hybrid','h-sym','v-sym','quad','radial','emblem','glyph']));
 
-  // ~1/3 of generations land in the b&w bucket, 2/3 span the colour library.
-  // image/custom palettes excluded — those are user-curated assets, not dice.
   const bw = Math.random() < 1/3;
   const palette = bw
     ? p(['mono','grays','grays'])
@@ -936,7 +946,33 @@ function generateWild(){
   setNum('fill', fill);
   document.getElementById('fillv').textContent = fill;
   setSeg('mcol', p([1,2,2,3,3,4,4,5,6,7,8]));
-  setSeg('dedup', p(['1','1','0']));
+  setSeg('enum', '0');
+  updateEnumUI();
+  setNum('seed', 0);
+  generate();
+}
+
+// autoplay 'wild' source — the conservative shuffle. PRESERVES the geometry
+// the user tuned (cells, pscale, spacing) so the autoplay loop reads as
+// stable/coherent: only colours, mode, and fill density change between ticks.
+// This is what Anton wants for live autoplay — the camera doesn't jump,
+// the symbols just morph their character.
+function generateWildAuto(){
+  const ri = n => Math.floor(Math.random()*n);
+  const p = a => a[ri(a.length)];
+
+  setSeg('mode', p(['random','hybrid','hybrid','h-sym','v-sym','quad','radial','emblem','glyph']));
+
+  const bw = Math.random() < 1/3;
+  const palette = bw
+    ? p(['mono','grays','grays'])
+    : p(['random','chaos','neon','retro','pastel','acid','crt','warm']);
+  setSeg('palette', palette);
+
+  const fill = 22 + ri(55);
+  setNum('fill', fill);
+  document.getElementById('fillv').textContent = fill;
+  setSeg('mcol', p([1,2,2,3,3,4,4,5,6,7,8]));
   setSeg('enum', '0');
   updateEnumUI();
   setNum('seed', 0);
@@ -1321,7 +1357,104 @@ function render(t){
       drawPatternToCtx(ctx, p.m, p.grid, s.n, s.pscale, x0, y0, baseOpts);
     }
   }
+  // Inflate is a post-process: read back the canvas bitmap, run a distance
+  // transform on the filled pixels (anything that isn't bg), and shade as
+  // if each connected blob were a balloon. Skipped during morph animation
+  // for performance — re-runs naturally on the final frame.
+  if(s.inflate && !animActive){
+    applyInflate(ctx, s.cw, s.ch, s.bg, s.pscale);
+  }
   fitCanvas();
+}
+
+// ========== inflate (puffy 2.5D shading) ==========
+// Per-pixel distance transform on the canvas bitmap, then shade each filled
+// pixel by treating its distance-from-edge as height on a sphere. Cells
+// don't need clustering — we use a fixed roll-off radius (~0.55 × pscale).
+// Pixels within that radius from any boundary get full puff curve; deeper
+// pixels are clamped at full bright. This means small symbols puff less
+// than large ones, which is physically what an inflating balloon does.
+function applyInflate(ctx, W, H, bg, pscale){
+  const img = ctx.getImageData(0, 0, W, H);
+  const data = img.data;
+  const total = W * H;
+  // bg test: a pixel is "filled" if alpha > 0. Canvas was clearRect'd so all
+  // non-painted pixels have alpha=0 — easy and palette-independent.
+  // Two-pass 3-4 chamfer distance transform (integer, fast). Distance is
+  // measured in tenths of pixel units (3 = 1 step orth, 4 = 1 step diag,
+  // ratio 4/3 ≈ √2 = 1.414). Cap at maxR*3 to keep it small.
+  const maxR  = Math.max(2, Math.round(pscale * 0.55));
+  const cap   = maxR * 3;             // chamfer units to clamp at
+  const dist  = new Uint16Array(total);
+  // initialize: empty pixels = 0 distance, filled pixels = cap (will shrink)
+  for(let i=0;i<total;i++){
+    dist[i] = data[i*4+3] > 16 ? cap : 0;
+  }
+  // forward pass
+  for(let y=0;y<H;y++){
+    const row = y*W;
+    for(let x=0;x<W;x++){
+      const idx = row + x;
+      if(dist[idx]===0) continue;
+      let d = dist[idx];
+      if(x>0)         d = Math.min(d, dist[idx-1] + 3);
+      if(y>0)         d = Math.min(d, dist[idx-W] + 3);
+      if(x>0 && y>0)  d = Math.min(d, dist[idx-W-1] + 4);
+      if(x<W-1 && y>0) d = Math.min(d, dist[idx-W+1] + 4);
+      dist[idx] = d;
+    }
+  }
+  // backward pass
+  for(let y=H-1;y>=0;y--){
+    const row = y*W;
+    for(let x=W-1;x>=0;x--){
+      const idx = row + x;
+      if(dist[idx]===0) continue;
+      let d = dist[idx];
+      if(x<W-1)         d = Math.min(d, dist[idx+1] + 3);
+      if(y<H-1)         d = Math.min(d, dist[idx+W] + 3);
+      if(x<W-1 && y<H-1) d = Math.min(d, dist[idx+W+1] + 4);
+      if(x>0 && y<H-1)  d = Math.min(d, dist[idx+W-1] + 4);
+      dist[idx] = d;
+    }
+  }
+  // Shade. The roll-off is in PIXELS, so convert back: dist is chamfer ×3
+  // for orth steps, so pixel-distance ≈ dist / 3.
+  // Shading curve: t = clamp(d/maxR, 0..1), z = sqrt(1 - (1-t)²) (sphere
+  // height normalized 0..1). Brightness multiplier in [edge .. center].
+  // Add a top-left highlight via height-gradient (cheap finite-difference).
+  const edgeMul   = 0.42;  // how dark the silhouette edge gets
+  const centerMul = 1.10;  // how bright the apex gets (slightly hot)
+  const specStr   = 0.55;  // top-left highlight strength
+  const px = new Float32Array(total);
+  // build normalized-puff height field z[i] (only for filled pixels)
+  for(let i=0;i<total;i++){
+    if(dist[i]===0) continue;
+    const t = Math.min(1, (dist[i]/3) / maxR);
+    px[i] = Math.sqrt(Math.max(0, 1 - (1-t)*(1-t)));
+  }
+  for(let y=0;y<H;y++){
+    const row = y*W;
+    for(let x=0;x<W;x++){
+      const idx = row + x;
+      if(dist[idx]===0) continue;
+      const z = px[idx];
+      // gradient (∂z/∂x, ∂z/∂y) → pseudo-normal for top-left light.
+      // Light direction: (-0.55, -0.55, 0.62) normalized — over-the-shoulder
+      // glance from upper-left, classic balloon highlight position.
+      const dzx = (x<W-1 ? px[idx+1] : z) - (x>0 ? px[idx-1] : z);
+      const dzy = (y<H-1 ? px[idx+W] : z) - (y>0 ? px[idx-W] : z);
+      // crude lambertian: surface normal (-dzx,-dzy,1), light (-.55,-.55,.62)
+      // unnormalized dot: 0.55*dzx + 0.55*dzy + 0.62
+      const lam = Math.max(0, 0.55*dzx + 0.55*dzy + 0.62);
+      const mul = edgeMul + (centerMul - edgeMul) * z + specStr * lam * z;
+      const off = idx*4;
+      data[off]   = Math.min(255, data[off]   * mul);
+      data[off+1] = Math.min(255, data[off+1] * mul);
+      data[off+2] = Math.min(255, data[off+2] * mul);
+    }
+  }
+  ctx.putImageData(img, 0, 0);
 }
 
 function fitCanvas(){
@@ -1781,7 +1914,10 @@ function tickAutoplay(){
   if(getVal('enum')==='1'){ setNum('seed', 0); generate(); return; }
   const src = getVal('autosrc');
   if(src==='morph'){ morphStep(); return; }
-  if(src==='wild'){ setNum('seed', 0); generateWild(); return; }
+  // 'wild' autoplay source uses the conservative shuffle (preserves geometry)
+  // so the loop reads as stable. The big-bang generateWild() is the
+  // "full random" button — only triggered by explicit user click.
+  if(src==='wild'){ setNum('seed', 0); generateWildAuto(); return; }
   setNum('seed', 0); generate();
 }
 function updateEnumUI(){
@@ -2252,13 +2388,14 @@ document.getElementById('fsExit').addEventListener('click',toggleFullscreen);
 document.getElementById('fsRegen').addEventListener('click',generate);
 document.getElementById('fsRandom').addEventListener('click',generateWild);
 // surface toggles → immediate re-render without regenerating patterns
-['outer','inner','gradblend'].forEach(id=>{
+['outer','inner','gradblend','inflate'].forEach(id=>{
   document.getElementById(id).addEventListener('click',e=>{
     if(e.target.tagName!=='BUTTON'||!state) return;
     const v=e.target.dataset.v==='1';
     if(id==='outer') state.outerRound=v;
     if(id==='inner') state.innerRound=v;
     if(id==='gradblend') state.gradBlend=v;
+    if(id==='inflate') state.inflate=v;
     render();
   });
 });
