@@ -76,15 +76,30 @@ html,body{height:100%;overflow:hidden}
 canvas{image-rendering:pixelated;image-rendering:crisp-edges;display:block;background:transparent}
 .canvas-holder{position:relative;display:inline-block;line-height:0;background:var(--canvas-bg,#000);box-shadow:0 0 0 1px #1a1a1a;transition:transform .3s ease-out, box-shadow .3s ease-out}
 .canvas-holder::after{content:"";position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .2s;z-index:3}
-.primary-bar{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px 16px;border-top:1px solid #1a1a1a;background:#0a0a0a;flex-shrink:0}
+.primary-bar{display:flex;flex-direction:column;gap:8px;padding:12px 16px;border-top:1px solid #1a1a1a;background:#0a0a0a;flex-shrink:0}
+.primary-bar > .action-row{display:grid;grid-template-columns:1fr 1fr 56px;gap:8px}
 .primary-bar button{background:#e8e8e8;color:#000;border:1px solid #e8e8e8;padding:11px;font-family:inherit;font-size:11px;cursor:pointer;text-transform:uppercase;letter-spacing:.18em;font-weight:600}
-.primary-bar button.alt{background:transparent;color:#e8e8e8}
-.primary-bar button:hover{background:#fff}
-.primary-bar button.alt:hover{background:#1a1a1a;color:#fff}
-.speed-row{grid-column:1/-1;display:flex;align-items:center;gap:8px;border-top:1px solid #1a1a1a;padding-top:8px}
-.speed-label{color:#555;font-size:9px;text-transform:uppercase;letter-spacing:.18em;flex-shrink:0;width:38px}
-.speed-row .seg{flex:1}
-.speed-row .seg button{flex:1;padding:5px 2px;font-size:10px}
+.primary-bar button.alt{background:transparent;color:#e8e8e8;border-color:#2a2a2a}
+.primary-bar button:hover{background:#fff;color:#000}
+.primary-bar button.alt:hover{background:#1a1a1a;color:#fff;border-color:#444}
+.primary-bar button.fs-compact{padding:11px 8px;font-size:14px;letter-spacing:0;font-weight:400}
+
+/* autoplay row: 8 equal columns. ▶ + 7 speed buttons. Black at rest, white
+   when active. The play button gets its active state from body.autoplaying;
+   the speed buttons toggle inside the seg. */
+.autoplay-row{display:grid;grid-template-columns:repeat(8, 1fr);gap:0;border:1px solid #2a2a2a;background:#0a0a0a}
+.autoplay-row button{background:transparent;color:#888;border:0;border-left:1px solid #181818;padding:9px 4px;font-family:inherit;font-size:10px;cursor:pointer;text-transform:lowercase;letter-spacing:.06em;font-weight:400;text-align:center}
+.autoplay-row button:first-child{border-left:0;font-size:13px;letter-spacing:0}
+.autoplay-row button:hover{color:#fff;background:#1a1a1a}
+.autoplay-row button.on{background:#e8e8e8;color:#000}
+body.autoplaying .autoplay-row #autoplay{background:#e8e8e8;color:#000}
+
+/* audio block: visually a single container holding the two trigger buttons
+   (beat-sync + BPM-lock) + BPM display, plus the compact 3-band EQ tucked
+   underneath. Border + padding bind everything together. */
+.audio-block{border:1px solid #2a2a2a;padding:8px;display:flex;flex-direction:column;gap:8px;background:#0c0c0c}
+.audio-row{display:grid;grid-template-columns:1fr 1fr 78px;gap:6px;align-items:stretch}
+.audio-row button{padding:9px 6px;font-size:10px;letter-spacing:.12em}
 .status{padding:8px 16px;border-top:1px solid #1a1a1a;color:#666;font-size:10px;letter-spacing:.06em;flex-shrink:0;min-height:26px}
 .status.ok{color:#06ffa5}
 .status.err{color:#ff006e}
@@ -110,16 +125,21 @@ canvas{cursor:pointer}
 @keyframes saveflash{0%{opacity:0;transform:scale(1)}30%{opacity:1;transform:scale(1.1)}100%{opacity:0;transform:scale(1.02)}}
 
 /* ==== autoplay + fullscreen ==== */
-body.autoplaying #autoplay,body.autoplaying #fsAutoplay{background:#06ffa5;color:#000;border-color:#06ffa5}
-body.beatsyncing #beatsync{background:#ff14c6;color:#000;border-color:#ff14c6}
-body.bpmlocking #bpmsync{background:#06ffa5;color:#000;border-color:#06ffa5}
-.beat-eq{grid-column:1/-1;display:grid;grid-template-columns:34px 1fr 56px;gap:6px 8px;align-items:center;border-top:1px solid #1a1a1a;padding-top:8px}
-.beat-eq .band-label{color:#777;font-size:10px;text-transform:uppercase;letter-spacing:.18em;text-align:right}
-.beat-eq input[type=range]{width:100%;accent-color:#ff14c6}
+/* fs-overlay autoplay button keeps its prominent green so it reads on top of
+   the canvas; in-bar #autoplay uses the unified white-active treatment from
+   the .autoplay-row block above. */
+body.autoplaying #fsAutoplay{background:#06ffa5;color:#000;border-color:#06ffa5}
+body.beatsyncing #beatsync{background:#e8e8e8;color:#000;border-color:#e8e8e8}
+body.bpmlocking #bpmsync{background:#e8e8e8;color:#000;border-color:#e8e8e8}
+/* compact 3-band EQ tucked under the beat-sync/BPM-lock buttons. 3 mini rows,
+   one per band. Each row: tiny label · sensitivity slider · onset-pulse meter. */
+.beat-eq{display:grid;grid-template-columns:18px 1fr 36px;gap:3px 6px;align-items:center}
+.beat-eq .band-label{color:#777;font-size:9px;text-transform:uppercase;letter-spacing:.12em;text-align:right}
+.beat-eq input[type=range]{width:100%;accent-color:#ff14c6;height:14px}
 /* onset-pulse meters: the bar is dark at rest and flashes ONLY when an
    onset is detected for its band — the user tunes sensitivity until the
    flash aligns with the audible beat, not with room noise. */
-.beat-meter{height:10px;background:#1a1a1a;border:1px solid #252525;position:relative;overflow:hidden;border-radius:2px}
+.beat-meter{height:8px;background:#1a1a1a;border:1px solid #252525;position:relative;overflow:hidden;border-radius:2px}
 .beat-meter>span{position:absolute;inset:0;background:currentColor;opacity:0;transform-origin:left;box-shadow:0 0 8px currentColor;will-change:opacity,transform}
 .beat-meter.pulse>span{animation:beatPulse .22s ease-out}
 @keyframes beatPulse{
@@ -131,11 +151,9 @@ body.bpmlocking #bpmsync{background:#06ffa5;color:#000;border-color:#06ffa5}
 .beat-eq .band-label.lo,.beat-eq .beat-meter.lo{color:#ff14c6}
 .beat-eq .band-label.mi,.beat-eq .beat-meter.mi{color:#ffbe0b}
 .beat-eq .band-label.hi,.beat-eq .beat-meter.hi{color:#06ffa5}
-.bpm-row{grid-column:1/-1;display:flex;align-items:center;gap:8px;margin-top:4px}
-.bpm-row button{flex:1}
-.bpm-display{flex:0 0 88px;text-align:center;background:#0a0a0a;border:1px solid #1f1f1f;color:#06ffa5;font-family:'JetBrains Mono',ui-monospace,monospace;font-size:22px;font-weight:600;padding:6px 8px;letter-spacing:0.02em;min-height:36px;display:flex;align-items:center;justify-content:center;transition:color .15s}
+.bpm-display{text-align:center;background:#0a0a0a;border:1px solid #1f1f1f;color:#06ffa5;font-family:'JetBrains Mono',ui-monospace,monospace;font-size:18px;font-weight:600;padding:6px 6px;letter-spacing:0.02em;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:color .15s;line-height:1}
 .bpm-display.locked{color:#ffbe0b;background:#140f00}
-.bpm-display .bpm-unit{font-size:10px;color:#555;margin-left:4px;font-weight:400;letter-spacing:.15em}
+.bpm-display .bpm-unit{font-size:8px;color:#555;margin-top:2px;font-weight:400;letter-spacing:.15em}
 body.bpm-pulse .bpm-display{animation:bpmPulse .12s ease-out}
 @keyframes bpmPulse{0%{transform:scale(1.08);color:#fff}100%{transform:scale(1);color:#06ffa5}}
 .fs-overlay{position:fixed;bottom:24px;right:20px;display:none;gap:8px;z-index:100}
@@ -193,19 +211,10 @@ body.fs{overflow:hidden!important;position:fixed;width:100%;height:100%}
 
     <div class="group">
       <div class="group-label">canvas</div>
-      <div class="row"><label>width</label><input type="number" id="cw" value="1600" step="100" min="200"></div>
-      <div class="row"><label>height</label><input type="number" id="ch" value="1600" step="100" min="200"></div>
-      <div class="row"><label>margin</label><input type="number" id="margin" value="40" min="0"></div>
       <div class="row"><label>bg</label>
         <div class="seg" id="bg" data-val="black" style="flex:1.6">
           <button data-v="black" class="on">black</button>
           <button data-v="white">white</button>
-        </div>
-      </div>
-      <div class="row"><label>fit screen</label>
-        <div class="seg" id="fit" data-val="1" style="flex:1.6">
-          <button data-v="0">off</button>
-          <button data-v="1" class="on">on</button>
         </div>
       </div>
       <div class="row"><label>layout</label>
@@ -214,11 +223,20 @@ body.fs{overflow:hidden!important;position:fixed;width:100%;height:100%}
           <button data-v="single">single · big</button>
         </div>
       </div>
+      <!-- hidden: width/height/margin/fit are auto-computed.
+           cw/ch follow viewport (always fit-to-screen).
+           margin is derived from spacing (edge gap = inter-cell gap). -->
+      <input type="hidden" id="cw" value="1600">
+      <input type="hidden" id="ch" value="1600">
+      <input type="hidden" id="margin" value="0">
+      <div class="seg" id="fit" data-val="1" hidden>
+        <button data-v="1" class="on">on</button>
+      </div>
     </div>
 
     <div class="group">
       <div class="group-label">pattern</div>
-      <div class="row"><label>size</label><input type="range" id="psize_r" min="3" max="20" value="5" step="1"><input type="number" id="psize" value="5" min="3" max="20" style="width:52px"></div>
+      <div class="row"><label>cells</label><input type="range" id="psize_r" min="3" max="20" value="5" step="1"><input type="text" id="psize" value="5×5" inputmode="numeric" autocomplete="off" style="width:52px;background:#151515;color:#fff;border:1px solid #252525;padding:3px 6px;font-family:inherit;font-size:11px;text-align:right"></div>
       <div class="row"><label>pixel scale</label><input type="range" id="pscale_r" min="2" max="60" value="10" step="1"><input type="number" id="pscale" value="10" min="2" max="60" style="width:52px"></div>
       <div class="row"><label>spacing</label><input type="range" id="spacing_r" min="0" max="100" value="6" step="1"><input type="number" id="spacing" value="6" min="0" max="100" style="width:52px"></div>
     </div>
@@ -316,7 +334,7 @@ body.fs{overflow:hidden!important;position:fixed;width:100%;height:100%}
           <button data-v="1" class="on">on</button>
         </div>
       </div>
-      <div class="row"><label>enumerate</label>
+      <div class="row"><label>sweep</label>
         <div class="seg" id="enum" data-val="0" style="flex:1.2">
           <button data-v="0" class="on">off</button>
           <button data-v="1">on</button>
@@ -326,7 +344,9 @@ body.fs{overflow:hidden!important;position:fixed;width:100%;height:100%}
         <input type="range" id="enumslider" min="0" max="10000" value="0" style="flex:1.6;accent-color:#06ffa5">
         <span class="val" id="enumpos" style="width:58px">0%</span>
       </div>
-      <div class="row"><label>seed · 0=auto</label><input type="number" id="seed" value="0" step="1"></div>
+      <!-- seed is auto-randomized each generate(); current value is shown in
+           the top bar so a memorable canvas can be screenshot-captured. -->
+      <input type="hidden" id="seed" value="0">
       <button id="enumrestart" class="enum-restart">↻ restart sweep</button>
     </div>
 
@@ -372,37 +392,50 @@ body.fs{overflow:hidden!important;position:fixed;width:100%;height:100%}
       </div>
     </div>
     <div class="primary-bar">
-      <button id="gen">regenerate</button>
-      <button id="genwild" class="alt">full random</button>
-      <button id="autoplay" class="alt">▶ autoplay</button>
-      <button id="beatsync" class="alt">♪ beat-sync</button>
-      <button id="fullscreen" class="alt" style="grid-column:1/-1">⛶ fullscreen</button>
-      <div class="speed-row">
-        <span class="speed-label">speed</span>
-        <div class="seg" id="autospeed" data-val="2000">
-          <button data-v="100">.1s</button>
-          <button data-v="250">.25s</button>
-          <button data-v="500">.5s</button>
-          <button data-v="1000">1s</button>
-          <button data-v="2000" class="on">2s</button>
-          <button data-v="5000">5s</button>
-          <button data-v="10000">10s</button>
+      <!-- row 1: action buttons. fullscreen is compact (single column), so the
+           three primary actions sit side-by-side with equal weight. -->
+      <div class="action-row">
+        <button id="gen">regenerate</button>
+        <button id="genwild" class="alt">full random</button>
+        <button id="fullscreen" class="alt fs-compact" title="fullscreen (F)">⛶</button>
+      </div>
+
+      <!-- row 2: autoplay = ▶ trigger + 7 speed presets, single uniform row.
+           All buttons are dark at rest, white when active. Speed buttons have
+           no effect until autoplay is on. -->
+      <div class="autoplay-row seg">
+        <button id="autoplay" title="toggle autoplay (A)">▶</button>
+        <button class="speed" data-v="100">.1s</button>
+        <button class="speed" data-v="250">.25s</button>
+        <button class="speed" data-v="500">.5s</button>
+        <button class="speed" data-v="1000">1s</button>
+        <button class="speed on" data-v="2000">2s</button>
+        <button class="speed" data-v="5000">5s</button>
+        <button class="speed" data-v="10000">10s</button>
+      </div>
+      <!-- hidden anchor preserved so existing autospeed code keeps working -->
+      <div class="seg" id="autospeed" data-val="2000" hidden></div>
+
+      <!-- row 3: audio block — beat-sync + BPM-lock as twin buttons inside one
+           container, with the BPM number on the right. The 3-band onset EQ
+           sits compact beneath them so the related controls stay adjacent. -->
+      <div class="audio-block">
+        <div class="audio-row">
+          <button id="beatsync" class="alt">♪ beat-sync</button>
+          <button id="bpmsync" class="alt">⏱ BPM lock</button>
+          <div class="bpm-display" id="bpmdisplay">—<span class="bpm-unit">BPM</span></div>
         </div>
-      </div>
-      <div class="beat-eq">
-        <span class="band-label lo">low</span>
-        <input type="range" id="beatsens_lo" min="1.05" max="3.00" step="0.05" value="1.55" title="low-band sensitivity">
-        <div class="beat-meter lo" id="beatlvl_lo"><span></span></div>
-        <span class="band-label mi">mid</span>
-        <input type="range" id="beatsens_mi" min="1.05" max="3.00" step="0.05" value="1.55" title="mid-band sensitivity">
-        <div class="beat-meter mi" id="beatlvl_mi"><span></span></div>
-        <span class="band-label hi">high</span>
-        <input type="range" id="beatsens_hi" min="1.05" max="3.00" step="0.05" value="1.55" title="high-band sensitivity">
-        <div class="beat-meter hi" id="beatlvl_hi"><span></span></div>
-      </div>
-      <div class="bpm-row">
-        <button id="bpmsync" class="alt">⏱ BPM lock</button>
-        <div class="bpm-display" id="bpmdisplay">—<span class="bpm-unit">BPM</span></div>
+        <div class="beat-eq">
+          <span class="band-label lo">lo</span>
+          <input type="range" id="beatsens_lo" min="1.05" max="3.00" step="0.05" value="1.55" title="low-band sensitivity">
+          <div class="beat-meter lo" id="beatlvl_lo"><span></span></div>
+          <span class="band-label mi">mi</span>
+          <input type="range" id="beatsens_mi" min="1.05" max="3.00" step="0.05" value="1.55" title="mid-band sensitivity">
+          <div class="beat-meter mi" id="beatlvl_mi"><span></span></div>
+          <span class="band-label hi">hi</span>
+          <input type="range" id="beatsens_hi" min="1.05" max="3.00" step="0.05" value="1.55" title="high-band sensitivity">
+          <div class="beat-meter hi" id="beatlvl_hi"><span></span></div>
+        </div>
       </div>
     </div>
     <div class="status" id="status">ready.</div>
@@ -410,8 +443,10 @@ body.fs{overflow:hidden!important;position:fixed;width:100%;height:100%}
 </div>
 
 <div class="fs-overlay">
-  <button id="fsAutoplay" title="toggle autoplay">▶</button>
-  <button id="fsExit" title="exit fullscreen">⛶</button>
+  <button id="fsRegen" title="regenerate (space)">↻</button>
+  <button id="fsRandom" title="full random (R)">⎈</button>
+  <button id="fsAutoplay" title="toggle autoplay (A)">▶</button>
+  <button id="fsExit" title="exit fullscreen (F)">⛶</button>
 </div>
 
 <script>
@@ -714,7 +749,16 @@ function enumKeyOf(mode,n){ return `${n}|${fdomainMode(mode)}`; }
 // ========== state ==========
 let state=null;
 const getVal = id => document.getElementById(id).dataset.val;
-const getNum = id => +document.getElementById(id).value;
+// getNum tolerates text inputs like "5×5", "5 x 5", "  5  ": pull the first
+// integer out and ignore whatever follows. Prevents NaN cascades when an
+// input is in display-format mode.
+const getNum = id => {
+  const el = document.getElementById(id);
+  if(!el) return 0;
+  const v = el.value;
+  const n = parseInt(String(v).match(/-?\d+/)?.[0] ?? '0', 10);
+  return isNaN(n) ? 0 : n;
+};
 function setSeg(id, val){
   const seg=document.getElementById(id);
   seg.dataset.val=String(val);
@@ -723,26 +767,36 @@ function setSeg(id, val){
   });
 }
 function setNum(id, val){
-  document.getElementById(id).value = val;
+  // psize is a display-format text input ("N×N"); everything else is a plain
+  // number input. Same setNum API for both so callers don't need to care.
+  if(id === 'psize'){
+    document.getElementById(id).value = val + '×' + val;
+  } else {
+    document.getElementById(id).value = val;
+  }
   const r = document.getElementById(id+'_r');
   if(r) r.value = val;
 }
 
 function generate(){
+  // Always fit-to-screen — width/height inputs are hidden and informational
+  // only. Canvas tracks viewport every regenerate.
   let cw, ch;
-  if(getVal('fit')==='1'){
+  {
     const wrap=document.querySelector('.canvas-wrap');
     const wW = wrap.clientWidth || window.innerWidth;
     const wH = wrap.clientHeight || Math.max(400, window.innerHeight*0.6);
     cw = Math.max(240, Math.floor(wW - 16));
     ch = Math.max(240, Math.floor(wH - 16));
     setNum('cw', cw); setNum('ch', ch);
-  } else {
-    cw=getNum('cw'); ch=getNum('ch');
   }
-  const margin=getNum('margin');
   const bg=getVal('bg');
   const n=getNum('psize'),pscale=getNum('pscale'),spacing=getNum('spacing');
+  // Margin auto-equals spacing — edge gap = inter-cell gap, so the framing
+  // breath always matches the gridding rhythm. Fixed minimum 4 px so single
+  // pattern doesn't kiss the canvas edge when spacing=0.
+  const margin = Math.max(4, spacing);
+  setNum('margin', margin);
   const mode=getVal('mode');
   const fill=getNum('fill');
   const paletteMode=getVal('palette');
@@ -857,35 +911,21 @@ function syncEnumSlider(info){
 }
 
 function generateWild(){
-  // full-random: every parameter shuffles.
-  // inside one canvas the pattern size is uniform (psize is a single setting),
-  // and mode is always hybrid so all seven families mix across the grid.
+  // full-random: PRESERVE the user-owned geometry & surface settings the user
+  // tuned (cells, pscale, spacing, outer-round, inner-round, blend, layout,
+  // bg) — those define the look. SHUFFLE the dice settings: pattern mode
+  // (across all 8 families), palette, fill density, colours-per-symbol,
+  // dedup. This way pressing "full random" feels like spinning a kaleidoscope
+  // inside the structure you already shaped, not blowing it up.
   const ri = n => Math.floor(Math.random()*n);
   const p = a => a[ri(a.length)];
 
-  // bg is USER-owned: wild mode never touches it. Default is black; flip
-  // to white only by explicit click in the UI.
+  // mode: all 8 families equal-weight + extra hybrid weight (it pulls from
+  // every family, the most "varied" choice).
+  setSeg('mode', p(['random','hybrid','hybrid','h-sym','v-sym','quad','radial','emblem','glyph']));
 
-  // pattern size: integer 3–20, biased toward 5–9 so wild mode mostly stays readable
-  const pSize = p([3,4,5,5,5,6,7,7,8,9,10,11,13,16,20]);
-  setNum('psize', pSize);
-  const pScale = 4 + ri(18);
-  setNum('pscale', pScale);
-  const block = pSize * pScale;
-
-  // spacing floor = ⌈block / 3⌉ (abs. min 3 px), ceiling ~60% of block size —
-  // so gaps always read clearly regardless of how big or small the block is
-  const minSp = Math.max(3, Math.ceil(block / 3));
-  const maxSp = Math.max(minSp + 4, Math.ceil(block * 0.6));
-  const sp = minSp + ri(maxSp - minSp + 1);
-  setNum('spacing', sp);
-  setNum('margin', ri(80));
-
-  // hybrid mode mixes all seven families inside one canvas
-  setSeg('mode', 'hybrid');
-
-  // ~1/3 of generations land in the b&w bucket (binary mono or gradient grays),
-  // the remaining 2/3 span the colour library
+  // ~1/3 of generations land in the b&w bucket, 2/3 span the colour library.
+  // image/custom palettes excluded — those are user-curated assets, not dice.
   const bw = Math.random() < 1/3;
   const palette = bw
     ? p(['mono','grays','grays'])
@@ -2119,7 +2159,11 @@ document.addEventListener('fullscreenchange', onFullscreenChange);
 document.addEventListener('webkitfullscreenchange', onFullscreenChange);
 
 // ========== ui wiring ==========
+// Generic .seg handler — toggles `on` class on the clicked button and copies
+// data-v into seg.dataset.val. Skip .autoplay-row (it's a custom hybrid:
+// ▶ trigger + speed presets, wired separately below).
 document.querySelectorAll('.seg').forEach(seg=>{
+  if(seg.classList.contains('autoplay-row')) return;
   seg.querySelectorAll('button').forEach(btn=>{
     btn.addEventListener('click',()=>{
       seg.querySelectorAll('button').forEach(b=>b.classList.remove('on'));
@@ -2132,20 +2176,58 @@ document.querySelectorAll('.seg').forEach(seg=>{
     });
   });
 });
+
+// Autoplay row: 8 buttons in one rail.
+//  · The first (▶) toggles autoplay — its own active state is driven by
+//    body.autoplaying, NOT by the .on class.
+//  · The other 7 are speed presets — only ONE has .on at a time, and
+//    clicking one mirrors its value into the hidden #autospeed seg so the
+//    rest of the autoplay code (which reads getVal('autospeed')) still works
+//    without modification.
+;(()=>{
+  const speedBtns = document.querySelectorAll('.autoplay-row .speed');
+  speedBtns.forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      speedBtns.forEach(b=>b.classList.remove('on'));
+      btn.classList.add('on');
+      // mirror into hidden #autospeed so existing handlers see the new value
+      const seg = document.getElementById('autospeed');
+      seg.dataset.val = btn.dataset.v;
+      // restart timer if autoplay is running
+      if(autoplayTimer){
+        clearInterval(autoplayTimer);
+        autoplayTimer = setInterval(tickAutoplay, +seg.dataset.val);
+      }
+    });
+  });
+})();
 document.getElementById('fill').addEventListener('input',e=>{
   document.getElementById('fillv').textContent=e.target.value;
 });
-// psize slider ↔ number (live). Changing grid size invalidates enum sweep.
+// psize: slider ↔ text input "N×N" (live). Changing cells count invalidates
+// enum sweep. The text input shows N×N for clarity, but accepts any leading
+// integer when typed (getNum strips non-digits). On blur we reformat.
 ;(()=>{
   const sl=document.getElementById('psize_r'), num=document.getElementById('psize');
-  const sync = (from, to) => {
-    to.value = from.value;
+  const clamp = v => Math.max(3, Math.min(20, v|0));
+  const fromSlider = () => {
+    const v = clamp(+sl.value);
+    num.value = v + '×' + v;
     enumCursor = 0; enumKey = '';
     updateEnumUI();
     generate();
   };
-  sl.addEventListener('input', ()=>sync(sl, num));
-  num.addEventListener('change', ()=>sync(num, sl));
+  const fromText = () => {
+    const v = clamp(getNum('psize'));
+    sl.value = v;
+    num.value = v + '×' + v;
+    enumCursor = 0; enumKey = '';
+    updateEnumUI();
+    generate();
+  };
+  sl.addEventListener('input', fromSlider);
+  num.addEventListener('change', fromText);
+  num.addEventListener('blur', fromText);
 })();
 // pscale slider ↔ number (live)
 ;(()=>{
@@ -2167,6 +2249,8 @@ document.getElementById('bpmsync').addEventListener('click',toggleBpmLock);
 document.getElementById('fullscreen').addEventListener('click',toggleFullscreen);
 document.getElementById('fsAutoplay').addEventListener('click',toggleAutoplay);
 document.getElementById('fsExit').addEventListener('click',toggleFullscreen);
+document.getElementById('fsRegen').addEventListener('click',generate);
+document.getElementById('fsRandom').addEventListener('click',generateWild);
 // surface toggles → immediate re-render without regenerating patterns
 ['outer','inner','gradblend'].forEach(id=>{
   document.getElementById(id).addEventListener('click',e=>{
@@ -2418,17 +2502,10 @@ function recolor(){
 })();
 
 updateEnumUI();
-// restart autoplay interval when speed changes mid-playback
-document.getElementById('autospeed').addEventListener('click', e=>{
-  if(e.target.tagName==='BUTTON' && autoplayTimer){
-    clearInterval(autoplayTimer);
-    autoplayTimer=setInterval(tickAutoplay, +getVal('autospeed'));
-  }
-});
-// re-generate when fit toggle changes
-document.getElementById('fit').addEventListener('click', e=>{
-  if(e.target.tagName==='BUTTON') requestAnimationFrame(generate);
-});
+// (autospeed change handler is wired inside the .autoplay-row block above —
+// the legacy #autospeed segment is hidden and only used as a value carrier.)
+// (fit toggle removed — fit-to-screen is always on; canvas tracks viewport
+// every regenerate.)
 document.addEventListener('keydown',e=>{
   if(e.target.tagName==='INPUT') return;
   if(e.code==='Space'){e.preventDefault();generate()}
