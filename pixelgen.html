@@ -630,11 +630,13 @@ function _parseGlyph5(str){
 const _GLYPH_BITS = {};
 for(const k of GLYPH_KEYS) _GLYPH_BITS[k] = _parseGlyph5(GLYPH_FONT_5[k]);
 
-// Place a 5×5 glyph into an n×n grid. For n ≥ 5 we scale up by floor(n/5)
-// so a 15×15 cell shows a recognizable glyph (3×3 px per font-pixel) rather
-// than a tiny 5×5 island. For n < 5 we sample down — small grids lose detail
-// but still give "letter-shaped" silhouettes.
-function placeGlyph5(g5, n){
+// Place a 5×5 glyph into an n×n grid. By DEFAULT we don't upscale: the
+// minimalist 5×5 silhouette stays at native size, centred — so a 20×20 cell
+// keeps the same crisp "letter" instead of bloating into a 4×4-px-thick
+// blob. Pass scale=true for the legacy stretch-to-fit behaviour (used
+// rarely as a variety knob). For n<5 we sample down, same as before.
+// Anton: «маленькие минималистичные глифы должны оставаться в тех размерах».
+function placeGlyph5(g5, n, scale){
   const m = empty(n);
   if(n < 5){
     for(let y=0;y<n;y++) for(let x=0;x<n;x++){
@@ -644,13 +646,62 @@ function placeGlyph5(g5, n){
     }
     return m;
   }
-  const cell = Math.max(1, Math.floor(n / 5));
-  const used = cell * 5;
-  const off = Math.floor((n - used) / 2);
-  for(let y=0;y<5;y++) for(let x=0;x<5;x++){
-    if(!g5[y][x]) continue;
-    for(let dy=0;dy<cell;dy++) for(let dx=0;dx<cell;dx++){
-      m[off + y*cell + dy][off + x*cell + dx] = 1;
+  if(scale){
+    const cell = Math.max(1, Math.floor(n / 5));
+    const used = cell * 5;
+    const off = Math.floor((n - used) / 2);
+    for(let y=0;y<5;y++) for(let x=0;x<5;x++){
+      if(!g5[y][x]) continue;
+      for(let dy=0;dy<cell;dy++) for(let dx=0;dx<cell;dx++){
+        m[off + y*cell + dy][off + x*cell + dx] = 1;
+      }
+    }
+  } else {
+    // native 5×5, centred — small glyph stays small at large n
+    const off = Math.floor((n - 5) / 2);
+    for(let y=0;y<5;y++) for(let x=0;x<5;x++){
+      if(g5[y][x]) m[off + y][off + x] = 1;
+    }
+  }
+  return m;
+}
+
+// Multi-glyph: pack several native-size 5×5 glyphs into an n×n cell with
+// 1-px gaps. With stride 6 (5 + 1 gap) we fit kH = floor((n+1)/6) horizontally
+// and kV vertically. For n=20: kH=kV=3 → up to 9 glyphs as a "word/phrase".
+// Some glyphs are mutants for variety. Anton: «можно запихнуть несколько,
+// чтобы появилось слово или рандомные символы».
+function genMultiGlyph(n){
+  const kH = Math.max(1, Math.floor((n + 1) / 6));
+  const kV = Math.max(1, Math.floor((n + 1) / 6));
+  if(kH < 2 && kV < 2){
+    return placeGlyph5(_GLYPH_BITS[GLYPH_KEYS[RI(GLYPH_KEYS.length)]], n, false);
+  }
+  // Sometimes use a single horizontal "word" (kV=1) for variety even when
+  // grid would allow stacking — reads as a label rather than a block.
+  const useRow = R() < 0.45;
+  const kVUse = useRow ? 1 : kV;
+  const usedW = kH * 5 + (kH - 1);
+  const usedH = kVUse * 5 + (kVUse - 1);
+  const offX = Math.floor((n - usedW) / 2);
+  const offY = Math.floor((n - usedH) / 2);
+  const m = empty(n);
+  for(let r=0; r<kVUse; r++){
+    for(let c=0; c<kH; c++){
+      let g5;
+      if(R() < 0.30){
+        // mutant — splice 2 random glyphs
+        const a = _GLYPH_BITS[GLYPH_KEYS[RI(GLYPH_KEYS.length)]];
+        const b = _GLYPH_BITS[GLYPH_KEYS[RI(GLYPH_KEYS.length)]];
+        g5 = makeMutant(a, b);
+      } else {
+        g5 = _GLYPH_BITS[GLYPH_KEYS[RI(GLYPH_KEYS.length)]];
+      }
+      const baseX = offX + c * 6;
+      const baseY = offY + r * 6;
+      for(let y=0; y<5; y++) for(let x=0; x<5; x++){
+        if(g5[y][x]) m[baseY + y][baseX + x] = 1;
+      }
     }
   }
   return m;
@@ -695,18 +746,21 @@ function makeMutant(g5a, g5b){
 
 function genGlyph(n,p){
   const r = R();
-  // 12% pixel circle (outline or filled), 28% mutant, otherwise straight glyph.
-  if(r < 0.06 && n >= 5) return drawPixelCircle(n, false);
-  if(r < 0.12 && n >= 5) return drawPixelCircle(n, true);
-  if(r < 0.40){
-    // mutant — splice 2 random glyphs
+  // n ≥ 11 fits ≥2 native 5×5 glyphs with a gap — show a "word/sequence"
+  // ~55 % of the time so big cells don't read as identical bloated single-letters.
+  if(n >= 11 && r < 0.55) return genMultiGlyph(n);
+  // mutant single — small native size by default; ~20 % chance to upscale at
+  // n≥8 for variety (one big mutant letter among the small ones)
+  if(r < 0.78){
     const a = _GLYPH_BITS[GLYPH_KEYS[RI(GLYPH_KEYS.length)]];
     const b = _GLYPH_BITS[GLYPH_KEYS[RI(GLYPH_KEYS.length)]];
-    return placeGlyph5(makeMutant(a, b), n);
+    const scale = (n >= 8 && R() < 0.20);
+    return placeGlyph5(makeMutant(a, b), n, scale);
   }
-  // straight glyph from font
+  // straight glyph from font (small, native 5×5 centred unless lucky upscale)
   const k = GLYPH_KEYS[RI(GLYPH_KEYS.length)];
-  let m = placeGlyph5(_GLYPH_BITS[k], n);
+  const scale = (n >= 8 && R() < 0.20);
+  let m = placeGlyph5(_GLYPH_BITS[k], n, scale);
   // Light "imperfection" on glyphs too, low probability — Anton wants
   // occasional half-broken letters in the mix, not perfect typography.
   if(R() < 0.18){
@@ -920,6 +974,11 @@ function expandFd(fdMode,n,subset,cells){
 let enumCursor=0, enumKey='';
 function enumKeyOf(mode,n){ return `${n}|${fdomainMode(mode)}`; }
 
+// Tracks the previous mode used by generate(). Carpet's "spacing = pscale"
+// auto-default fires ONCE on transition INTO carpet — after that we respect
+// whatever the user set on the spacing slider (and morph never touches it).
+let _prevGenMode = null;
+
 // ========== state ==========
 let state=null;
 const getVal = id => document.getElementById(id).dataset.val;
@@ -965,13 +1024,23 @@ function generate(){
     setNum('cw', cw); setNum('ch', ch);
   }
   const bg=getVal('bg');
-  const n=getNum('psize'),pscale=getNum('pscale'),spacing=getNum('spacing');
+  const n=getNum('psize'),pscale=getNum('pscale');
+  let spacing=getNum('spacing');
+  const mode=getVal('mode');
+  // One-shot carpet default: when user FIRST switches into carpet mode,
+  // initialise spacing = pscale so the gaps look like woven fabric. After
+  // that, respect whatever the user set on the slider (slider drag, morph,
+  // re-renders) — we only intervene on the mode transition itself.
+  if(mode === 'carpet' && _prevGenMode !== 'carpet'){
+    spacing = pscale;
+    setNum('spacing', spacing);
+  }
+  _prevGenMode = mode;
   // Margin auto-equals spacing — edge gap = inter-cell gap, so the framing
   // breath always matches the gridding rhythm. Fixed minimum 4 px so single
   // pattern doesn't kiss the canvas edge when spacing=0.
   const margin = Math.max(4, spacing);
   setNum('margin', margin);
-  const mode=getVal('mode');
   const fill=getNum('fill');
   const paletteMode=getVal('palette');
   const maxColors=+getVal('mcol');
@@ -994,14 +1063,8 @@ function generate(){
   } else {
     effPscale=pscale;
     effSpacing=spacing;
-    // carpet mode forces gap = one pixel-cell wide. The gaps between blocks
-    // then read as "the same fabric" as the patterns themselves — that's
-    // what makes a Persian rug feel woven rather than gridded. We also
-    // reflect this in the spacing slider so the UI doesn't lie.
-    if(mode==='carpet'){
-      effSpacing = effPscale;
-      setNum('spacing', effSpacing);
-    }
+    // (carpet's spacing default is now applied once on mode transition above —
+    // we intentionally do NOT re-clamp every regen, so the user can override.)
     const block=n*effPscale, stride=block+effSpacing;
     cols=Math.max(1,Math.floor((cw-2*margin+effSpacing)/stride));
     rows=Math.max(1,Math.floor((ch-2*margin+effSpacing)/stride));
@@ -1017,6 +1080,7 @@ function generate(){
   const enumOn = getVal('enum')==='1';
   const patterns=[];
   let enumInfo=null;
+  let carpetSources=null;
 
   if(mode==='carpet' && layout==='grid'){
     // ── carpet · Persian-rug layout ────────────────────────────────────
@@ -1090,7 +1154,11 @@ function generate(){
       }
       bandSpecs.push({rhythm, variants});
     }
-    // cache by (bandIdx, variantIdx) — same key still gives one cached pattern
+    // cache keyed by (bandIdx, variantIdx) is the SOURCE quadrant. Every
+    // cell on the carpet derives its own (m, grid) by flipping the source
+    // through (flipH, flipV). Storing srcKey + flips on each pattern lets
+    // morph mutate the source ONCE and re-derive every cell, so 4-way
+    // mirror symmetry survives any number of morph ticks.
     const cache = Object.create(null);
     const flipMat = (mat, fh, fv) => {
       const sz = mat.length;
@@ -1126,50 +1194,57 @@ function generate(){
         }
         const pos = minoff + azIdx*7; // mix radial + angular into rhythm pos
         const variantIdx = band.rhythm[((pos % band.rhythm.length) + band.rhythm.length) % band.rhythm.length];
-        const key = bandIdx+','+variantIdx;
-        if(!cache[key]){
+        const srcKey = bandIdx+','+variantIdx;
+        if(!cache[srcKey]){
           const v = band.variants[variantIdx];
           const sub = pickSubMode(v.mode);
           const m0 = genPatternWithMode(sub, n, fill);
           const grid0 = colorize(m0, v.pal, v.mcol, bg, paletteMode);
-          cache[key] = {m:m0, grid:grid0, subMode:sub};
+          cache[srcKey] = {m:m0, grid:grid0, subMode:sub};
         }
-        const cached = cache[key];
+        const src = cache[srcKey];
         const flipH = c > halfC;
         const flipV = r > halfR;
-        const m = (flipH || flipV) ? flipMat(cached.m, flipH, flipV) : cached.m;
-        const grid = (flipH || flipV) ? flipMat(cached.grid, flipH, flipV) : cached.grid;
-        patterns.push({m, grid, band: bandIdx, subMode: cached.subMode, imperfect:false});
+        // ALWAYS create independent copies (even at flipH=flipV=false) so
+        // morph's per-cell mutations don't accidentally alias. Source stays
+        // pristine on state.carpetSources; cells are pure derivations.
+        patterns.push({
+          m: flipMat(src.m, flipH, flipV),
+          grid: flipMat(src.grid, flipH, flipV),
+          band: bandIdx,
+          subMode: src.subMode,
+          imperfect: false,
+          carpet: {srcKey, flipH, flipV},
+        });
       }
     }
+    // expose the source quadrants on state so morphStep can mutate them once
+    // and re-derive every cell.
+    carpetSources = cache;
   } else if(enumOn){
-    // enum sweep — systematic, deterministic
+    // Enum sweeps the FULL 2^m universe by popcount (sparse → dense), then
+    // lex within each popcount. Cursor 0 → single dot top-left. Last cursor
+    // → fully-filled square. After that the cursor wraps back to the dot.
+    // Anton: «самая первая — одна точка в верхнем левом углу, последний —
+    // полностью закрашенный квадрат, и после него опять точка». We skip
+    // globalIdx=0 (empty grid — visually nothing) so the sweep is bracketed
+    // by the dot and the filled square exactly as he described.
     const fdMode = fdomainMode(mode);
     const cells = fdomainCells(fdMode, n);
     const fdSize = cells.length;
     const fullTotal = enumTotalForM(fdSize);
-    // Bias the popcount window by fill%. Anton: «если поставлю 100, должно
-    // быть всё заполнено, а получаются точки» — that's because the old enum
-    // started at popcount 0 and ignored fill entirely. Now we sweep within
-    // a ±5% band of the requested density, so fill=100 → patterns near
-    // fully-on, fill=50 → half-density, fill=10 → very sparse.
-    const targetK = Math.max(0, Math.min(fdSize, Math.round((fill/100) * fdSize)));
-    const bandHalf = Math.max(1, Math.round(fdSize * 0.05));
-    const kLo = Math.max(0, targetK - bandHalf);
-    const kHi = Math.min(fdSize, targetK + bandHalf);
-    let lowerCum = 0;
-    for(let kk=0; kk<kLo; kk++) lowerCum += binomial(fdSize, kk);
-    let bandTotal = 0;
-    for(let kk=kLo; kk<=kHi; kk++) bandTotal += binomial(fdSize, kk);
-    if(!isFinite(bandTotal) || bandTotal <= 0) bandTotal = 1;
-    // include band bounds in key so cursor restarts when fill shifts the window
-    const key = enumKeyOf(mode, n) + '|k' + kLo + '-' + kHi;
+    // sweepTotal excludes the empty pattern (globalIdx=0). Cursor lives in
+    // [0, sweepTotal); idx = cursor + 1 gives globalIdx in [1, fullTotal).
+    const sweepTotal = isFinite(fullTotal) ? Math.max(1, fullTotal - 1) : Infinity;
+    const key = enumKeyOf(mode, n);
     if(key !== enumKey){ enumCursor=0; enumKey=key; }
     const startCursor = enumCursor;
     let firstK=null, lastK=0;
     for(let i=0;i<total;i++){
-      const offset = ((startCursor + i) % bandTotal + bandTotal) % bandTotal;
-      const idx = lowerCum + offset;
+      const cursorPos = isFinite(sweepTotal)
+        ? (((startCursor + i) % sweepTotal) + sweepTotal) % sweepTotal
+        : (startCursor + i);
+      const idx = cursorPos + 1; // skip globalIdx=0 (empty)
       const {k, subset} = enumNthSubset(fdSize, idx);
       if(firstK===null) firstK=k;
       lastK=k;
@@ -1179,8 +1254,8 @@ function generate(){
       patterns.push({m:matrix, grid:colorize(matrix, palette, maxColors, bg, paletteMode), band:Math.floor(Math.random()*3), subMode:mode, imperfect:false});
     }
     enumCursor = startCursor + total;
-    if(enumCursor >= bandTotal) enumCursor = enumCursor % bandTotal;
-    enumInfo = {fdMode, fdSize, fullTotal, startCursor, firstK, lastK, kLo, kHi, bandTotal};
+    if(isFinite(sweepTotal) && enumCursor >= sweepTotal) enumCursor = enumCursor % sweepTotal;
+    enumInfo = {fdMode, fdSize, fullTotal, sweepTotal, startCursor, firstK, lastK};
     rand = mulberry32(seed); // restore for anything else
   } else {
     // makeOne resolves the actual sub-mode per pattern, generates with it,
@@ -1220,16 +1295,15 @@ function generate(){
   const outerRound = getVal('outer')==='1';
   const innerRound = getVal('inner')==='1';
   const gradBlend  = getVal('gradblend')==='1';
-  state={cw,ch,margin,bg,n,pscale:effPscale,spacing:effSpacing,layout,offsetX,offsetY,mode,fill,paletteMode,maxColors,cols,rows,patterns,seed,enumInfo,outerRound,innerRound,gradBlend};
+  state={cw,ch,margin,bg,n,pscale:effPscale,spacing:effSpacing,layout,offsetX,offsetY,mode,fill,paletteMode,maxColors,cols,rows,patterns,seed,enumInfo,outerRound,innerRound,gradBlend,carpetSources};
   render();
   document.getElementById('sgrid').textContent=`${cols}×${rows}`;
   document.getElementById('spatt').textContent=patterns.length;
   document.getElementById('sseed').textContent=enumOn ? '—' : seed;
   if(enumOn && enumInfo){
-    const t = isFinite(enumInfo.bandTotal) ? enumInfo.bandTotal.toLocaleString() : '∞';
+    const t = isFinite(enumInfo.sweepTotal) ? enumInfo.sweepTotal.toLocaleString() : '∞';
     const kRange = enumInfo.firstK===enumInfo.lastK ? `k=${enumInfo.firstK}` : `k=${enumInfo.firstK}..${enumInfo.lastK}`;
-    const band = `band ${enumInfo.kLo}..${enumInfo.kHi}/${enumInfo.fdSize}`;
-    setStatus(`enum · ${enumInfo.startCursor.toLocaleString()}→${(enumInfo.startCursor+total-1).toLocaleString()} / ${t} · ${kRange} · ${band} · ${enumInfo.fdMode}`);
+    setStatus(`enum · ${enumInfo.startCursor.toLocaleString()}→${(enumInfo.startCursor+total-1).toLocaleString()} / ${t} · ${kRange} · ${enumInfo.fdMode}`);
     syncEnumSlider(enumInfo);
   } else {
     setStatus(`${patterns.length} symbols · ${mode} · ${paletteMode} · seed ${seed}`);
@@ -1240,10 +1314,9 @@ function syncEnumSlider(info){
   const sl = document.getElementById('enumslider');
   const lbl = document.getElementById('enumpos');
   if(!sl || !lbl) return;
-  // Slider tracks position WITHIN the current popcount-band (fill-biased),
-  // not within the full 2^m universe — so dragging it stays at the
-  // requested density.
-  const denom = (info.bandTotal && isFinite(info.bandTotal)) ? info.bandTotal : info.fullTotal;
+  // Slider tracks position within the FULL 2^m universe (minus the empty
+  // grid) — 0 = single dot, 100 % = fully filled square.
+  const denom = (info.sweepTotal && isFinite(info.sweepTotal)) ? info.sweepTotal : info.fullTotal;
   if(isFinite(denom) && denom > 0){
     const frac = info.startCursor / denom;
     if(!sl.matches(':active')) sl.value = Math.round(frac * 10000);
@@ -2085,15 +2158,95 @@ function morphStep(filter){
   const s=state, n=s.n;
   const palette= getPalette(s.paletteMode, s.bg);
 
-  // If filter is provided (3-band dance), finalize any in-flight anim on
-  // ALL patterns first — so that patterns we're NOT re-morphing snap to
-  // their already-updated grid and don't re-animate from t=0 when the
-  // RAF restarts. Only filter-matching patterns will get fresh anim.
+  // Reusable matrix-flip helper (same one used in generate()'s carpet branch).
+  const flipMat = (mat, fh, fv) => {
+    const sz = mat.length;
+    const out = Array.from({length:sz},()=>Array(sz).fill(null));
+    for(let y=0;y<sz;y++) for(let x=0;x<sz;x++){
+      const sy = fv ? sz-1-y : y;
+      const sx = fh ? sz-1-x : x;
+      out[y][x] = mat[sy][sx];
+    }
+    return out;
+  };
+
+  // Capture pre-morph m/grid for every pattern up front. Needed for
+  // (a) recolouring via neighbour pick on non-carpet, (b) spawn/die
+  // animation deltas, (c) source-recolour on carpet sources.
+  const oldData = s.patterns.map(p => ({
+    m: p.m.map(r => r.slice()),
+    grid: p.grid.map(r => r.slice()),
+  }));
+  // Clear any stale animation flags. Patterns that morph this tick get
+  // fresh anims set in phase 3; patterns we don't touch stay still.
+  for(const p of s.patterns) p.anim = null;
+
   let touched = false;
+
+  // ── Phase 1: source-level morph for CARPET patterns ───────────────────
+  // The carpet's 4-way mirror symmetry only survives if all cells using
+  // the same source quadrant change in lockstep. So we morph each unique
+  // source ONCE in its fundamental domain, then re-derive every cell's
+  // (m, grid) by re-applying the cell's stored (flipH, flipV).
+  if(s.mode === 'carpet' && s.carpetSources){
+    const srcsToMorph = new Set();
+    s.patterns.forEach((p, i) => {
+      if(filter && !filter(p, i)) return;
+      if(p.carpet) srcsToMorph.add(p.carpet.srcKey);
+    });
+
+    if(srcsToMorph.size > 0){
+      touched = true;
+      // 1a. Mutate each source once + recolour with neighbour-pick.
+      for(const key of srcsToMorph){
+        const src = s.carpetSources[key];
+        if(!src) continue;
+        const oldSrcM    = src.m.map(r => r.slice());
+        const oldSrcGrid = src.grid.map(r => r.slice());
+        const fdMode = fdomainMode(src.subMode);
+        const cells  = fdomainCells(fdMode, n);
+        const flips  = 1 + Math.floor(Math.random()*2);
+        for(let f=0; f<flips; f++){
+          const [y,x] = cells[Math.floor(Math.random()*cells.length)];
+          const nv = src.m[y][x] ? 0 : 1;
+          for(const [oy,ox] of getOrbit(fdMode, n, y, x)) src.m[oy][ox] = nv;
+        }
+        const newSrcGrid = Array.from({length:n},()=>Array(n).fill(null));
+        for(let y=0;y<n;y++) for(let x=0;x<n;x++){
+          if(!src.m[y][x]) continue;
+          if(oldSrcM[y][x] && oldSrcGrid[y][x]){
+            newSrcGrid[y][x] = oldSrcGrid[y][x];
+          } else {
+            let nb = null;
+            const cand=[[y-1,x],[y+1,x],[y,x-1],[y,x+1]];
+            for(const [ny,nx] of cand){
+              if(ny>=0&&ny<n&&nx>=0&&nx<n && oldSrcGrid[ny] && oldSrcGrid[ny][nx]){
+                nb = oldSrcGrid[ny][nx]; break;
+              }
+            }
+            newSrcGrid[y][x] = morphPick(s.paletteMode, palette, s.bg, nb);
+          }
+        }
+        src.grid = newSrcGrid;
+      }
+      // 1b. Re-derive every carpet pattern from its (newly mutated) source.
+      s.patterns.forEach((p, i) => {
+        if(filter && !filter(p, i)) return;
+        if(!p.carpet) return;
+        if(!srcsToMorph.has(p.carpet.srcKey)) return;
+        const src = s.carpetSources[p.carpet.srcKey];
+        if(!src) return;
+        p.m    = flipMat(src.m,    p.carpet.flipH, p.carpet.flipV);
+        p.grid = flipMat(src.grid, p.carpet.flipH, p.carpet.flipV);
+      });
+    }
+  }
+
+  // ── Phase 2: per-pattern morph for NON-carpet patterns ────────────────
   for(let i=0; i<s.patterns.length; i++){
     const p = s.patterns[i];
-    p.anim = null; // clear stale anim; will be set below if morphed
     if(filter && !filter(p, i)) continue;
+    if(p.carpet) continue; // already handled above
     touched = true;
     // Per-pattern sub-mode: a quad pattern flips orbit-cells inside QUAD's
     // fundamental domain, a glyph pattern inside 'none' (free), etc. This
@@ -2103,8 +2256,6 @@ function morphStep(filter){
     const fdMode = fdomainMode(pSubMode);
     const cells  = fdomainCells(fdMode, n);
     const flips = 1 + Math.floor(Math.random()*2); // 1 or 2
-    const oldM    = p.m.map(r=>r.slice());
-    const oldGrid = p.grid.map(r=>r.slice());
     for(let f=0; f<flips; f++){
       const [y,x] = cells[Math.floor(Math.random()*cells.length)];
       const nv = p.m[y][x] ? 0 : 1;
@@ -2118,6 +2269,8 @@ function morphStep(filter){
         if(Math.random() < 0.04) p.m[y][x] = p.m[y][x] ? 0 : 1;
       }
     }
+    const oldM    = oldData[i].m;
+    const oldGrid = oldData[i].grid;
     const newGrid = Array.from({length:n},()=>Array(n).fill(null));
     for(let y=0;y<n;y++) for(let x=0;x<n;x++){
       if(!p.m[y][x]) continue;
@@ -2133,9 +2286,14 @@ function morphStep(filter){
       }
     }
     p.grid = newGrid;
+  }
 
-    // Animation deltas: newborns anchored to an old-active neighbour,
-    // dying cells anchored to a surviving neighbour.
+  // ── Phase 3: spawn/die animation deltas (per-pattern, post-morph) ─────
+  for(let i=0; i<s.patterns.length; i++){
+    const p = s.patterns[i];
+    if(filter && !filter(p, i)) continue;
+    const oldM    = oldData[i].m;
+    const oldGrid = oldData[i].grid;
     const spawn = [];
     const die   = [];
     for(let y=0;y<n;y++) for(let x=0;x<n;x++){
@@ -2158,6 +2316,7 @@ function morphStep(filter){
     }
     p.anim = (spawn.length || die.length) ? { spawn, die } : null;
   }
+
   if(touched) _animateMorph();
   else render(); // filter matched no patterns → just finalize stale anim
 }
@@ -2679,10 +2838,9 @@ document.getElementById('enumslider').addEventListener('input', ()=>{
     slidePending=false;
     const frac = +document.getElementById('enumslider').value / 10000;
     const info = state && state.enumInfo;
-    // slider scrubs within the fill-biased popcount band, not the full
-    // 2^m universe. Falls back to fullTotal then to a reasonable default.
-    const total = (info && isFinite(info.bandTotal) && info.bandTotal>0)
-      ? info.bandTotal
+    // slider scrubs across the full 2^m universe (minus the empty grid).
+    const total = (info && isFinite(info.sweepTotal) && info.sweepTotal>0)
+      ? info.sweepTotal
       : ((info && isFinite(info.fullTotal)) ? info.fullTotal : 1000000);
     enumCursor = Math.floor(frac * total);
     generate();
