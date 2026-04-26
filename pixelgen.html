@@ -337,7 +337,7 @@ body.fs{overflow:hidden!important;position:fixed;width:100%;height:100%}
       </div>
       <div class="row"><label>jump to</label>
         <input type="range" id="enumslider" min="0" max="10000" value="0" style="flex:1.6;accent-color:#06ffa5">
-        <span class="val" id="enumpos" style="width:58px">0%</span>
+        <span class="val" id="enumpos" style="width:128px">0% · —</span>
       </div>
       <!-- seed is auto-randomized each generate(); current value is shown in
            the top bar so a memorable canvas can be screenshot-captured. -->
@@ -675,7 +675,7 @@ function genMultiGlyph(n){
   const kH = Math.max(1, Math.floor((n + 1) / 6));
   const kV = Math.max(1, Math.floor((n + 1) / 6));
   if(kH < 2 && kV < 2){
-    return placeGlyph5(_GLYPH_BITS[GLYPH_KEYS[RI(GLYPH_KEYS.length)]], n, false);
+    return placeGlyph5(_pickGlyph5(), n, false);
   }
   // Sometimes use a single horizontal "word" (kV=1) for variety even when
   // grid would allow stacking — reads as a label rather than a block.
@@ -688,15 +688,7 @@ function genMultiGlyph(n){
   const m = empty(n);
   for(let r=0; r<kVUse; r++){
     for(let c=0; c<kH; c++){
-      let g5;
-      if(R() < 0.30){
-        // mutant — splice 2 random glyphs
-        const a = _GLYPH_BITS[GLYPH_KEYS[RI(GLYPH_KEYS.length)]];
-        const b = _GLYPH_BITS[GLYPH_KEYS[RI(GLYPH_KEYS.length)]];
-        g5 = makeMutant(a, b);
-      } else {
-        g5 = _GLYPH_BITS[GLYPH_KEYS[RI(GLYPH_KEYS.length)]];
-      }
+      const g5 = _pickGlyph5();
       const baseX = offX + c * 6;
       const baseY = offY + r * 6;
       for(let y=0; y<5; y++) for(let x=0; x<5; x++){
@@ -705,6 +697,22 @@ function genMultiGlyph(n){
     }
   }
   return m;
+}
+
+// Single source of truth for "pick a 5×5 glyph". Mixes three families:
+//   · dictionary  — A–Z, 0–9, Cyrillic, specials, math (~40 %)
+//   · procedural  — strokes composed by formula (~35 %): sticks + arcs +
+//                   diagonals + corners + dots, with random interruptions.
+//                   This is the open-ended "alphabet generator" — letters
+//                   fall out for free, plus countless never-seen shapes.
+//   · mutant      — splice of two dictionary glyphs (~25 %)
+function _pickGlyph5(){
+  const r = R();
+  if(r < 0.40) return _GLYPH_BITS[GLYPH_KEYS[RI(GLYPH_KEYS.length)]];
+  if(r < 0.75) return genProceduralGlyph5();
+  const a = _GLYPH_BITS[GLYPH_KEYS[RI(GLYPH_KEYS.length)]];
+  const b = _GLYPH_BITS[GLYPH_KEYS[RI(GLYPH_KEYS.length)]];
+  return makeMutant(a, b);
 }
 
 // Pixel circle: midpoint algorithm for outline, fill option for disc.
@@ -723,6 +731,120 @@ function drawPixelCircle(n, filled){
       if(Math.abs(d - r) < 0.7) m[y][x] = 1;
     }
   }
+  return m;
+}
+
+// ── procedural glyph composer ────────────────────────────────────────────
+// Anton: «глиф — это поведение линий. Палки, круги, полукруги, диагонали,
+// которые перемешиваются и обрываются». So a glyph is not a fixed bitmap —
+// it's an emergent shape built from a few primitive strokes that compose,
+// intersect, and sometimes break. Variations like "vertical stick + horizontal
+// stick raised by 0/1/2" emerge naturally from the random length/position of
+// each stroke; an L is a vstick at col 0 + hstick at row 4, an F is
+// vstick + 2 hsticks at rows 0, 2, etc. Letters fall out of the combinatorics
+// for free, plus countless "alphabet-like" shapes that have no name.
+function _drawVStick(m, c, r1, r2){
+  if(c < 0 || c >= 5) return;
+  const lo = Math.min(r1, r2), hi = Math.max(r1, r2);
+  for(let y = lo; y <= hi; y++) if(y >= 0 && y < 5) m[y][c] = 1;
+}
+function _drawHStick(m, r, c1, c2){
+  if(r < 0 || r >= 5) return;
+  const lo = Math.min(c1, c2), hi = Math.max(c1, c2);
+  for(let x = lo; x <= hi; x++) if(x >= 0 && x < 5) m[r][x] = 1;
+}
+function _drawDiagStroke(m, y1, x1, y2, x2){
+  const dy = y2 - y1, dx = x2 - x1;
+  const steps = Math.max(Math.abs(dy), Math.abs(dx));
+  if(steps === 0){
+    if(y1 >= 0 && y1 < 5 && x1 >= 0 && x1 < 5) m[y1][x1] = 1;
+    return;
+  }
+  for(let i = 0; i <= steps; i++){
+    const y = Math.round(y1 + dy * i / steps);
+    const x = Math.round(x1 + dx * i / steps);
+    if(y >= 0 && y < 5 && x >= 0 && x < 5) m[y][x] = 1;
+  }
+}
+function _drawCircleStroke(m, cy, cx, r){
+  for(let y = 0; y < 5; y++) for(let x = 0; x < 5; x++){
+    const dy = y - cy, dx = x - cx;
+    const d = Math.sqrt(dy*dy + dx*dx);
+    if(Math.abs(d - r) < 0.6) m[y][x] = 1;
+  }
+}
+// quad: 0=top, 1=right, 2=bottom, 3=left, 4=NE, 5=SE, 6=SW, 7=NW
+function _drawArcStroke(m, cy, cx, r, quad){
+  for(let y = 0; y < 5; y++) for(let x = 0; x < 5; x++){
+    const dy = y - cy, dx = x - cx;
+    const d = Math.sqrt(dy*dy + dx*dx);
+    if(Math.abs(d - r) >= 0.6) continue;
+    const inQuad =
+      (quad === 0 && dy <= 0) ||
+      (quad === 1 && dx >= 0) ||
+      (quad === 2 && dy >= 0) ||
+      (quad === 3 && dx <= 0) ||
+      (quad === 4 && dy <= 0 && dx >= 0) ||
+      (quad === 5 && dy >= 0 && dx >= 0) ||
+      (quad === 6 && dy >= 0 && dx <= 0) ||
+      (quad === 7 && dy <= 0 && dx <= 0);
+    if(inQuad) m[y][x] = 1;
+  }
+}
+// Corner stroke (L-shape): vertical leg + horizontal leg sharing one endpoint.
+// corner: 0=TL, 1=TR, 2=BL, 3=BR — which corner of the 5×5 anchors the joint.
+function _drawCornerStroke(m, corner, vlen, hlen){
+  const r0 = (corner === 0 || corner === 1) ? 0 : 4;
+  const c0 = (corner === 0 || corner === 2) ? 0 : 4;
+  const dr = (corner === 0 || corner === 1) ? 1 : -1;
+  const dc = (corner === 0 || corner === 2) ? 1 : -1;
+  for(let i = 0; i < vlen; i++){
+    const r = r0 + i * dr;
+    if(r >= 0 && r < 5) m[r][c0] = 1;
+  }
+  for(let i = 0; i < hlen; i++){
+    const c = c0 + i * dc;
+    if(c >= 0 && c < 5) m[r0][c] = 1;
+  }
+}
+// Stroke distribution: sticks weighted heavier (basis of most letters), arcs
+// and diagonals less common, dots rare punctuation.
+const _PROC_PRIMS = ['vstick','vstick','vstick','hstick','hstick','hstick','diag','diag','arc','arc','corner','corner','dot'];
+function genProceduralGlyph5(){
+  const m = Array.from({length: 5}, () => Array(5).fill(0));
+  const strokeCount = 1 + Math.floor(R() * 4); // 1–4 strokes
+  for(let s = 0; s < strokeCount; s++){
+    const kind = _PROC_PRIMS[Math.floor(R() * _PROC_PRIMS.length)];
+    if(kind === 'vstick'){
+      _drawVStick(m, RI(5), RI(5), RI(5));
+    } else if(kind === 'hstick'){
+      _drawHStick(m, RI(5), RI(5), RI(5));
+    } else if(kind === 'diag'){
+      _drawDiagStroke(m, RI(5), RI(5), RI(5), RI(5));
+    } else if(kind === 'arc'){
+      const sub = RI(8);
+      if(sub === 0)      _drawCircleStroke(m, 2, 2, 2);   // big ring
+      else if(sub === 1) _drawCircleStroke(m, 2, 2, 1);   // tiny ring (cross)
+      else               _drawArcStroke(m, 2, 2, 2, sub - 2);
+    } else if(kind === 'corner'){
+      _drawCornerStroke(m, RI(4), 2 + RI(3), 2 + RI(3));
+    } else if(kind === 'dot'){
+      m[RI(5)][RI(5)] = 1;
+    }
+  }
+  // Anton: «обрываются» — punch 1–2 holes so strokes don't always read as
+  // perfectly continuous. Adds the "broken letter" character.
+  if(R() < 0.35){
+    const holes = 1 + RI(2);
+    for(let h = 0; h < holes; h++){
+      const y = RI(5), x = RI(5);
+      if(m[y][x]) m[y][x] = 0;
+    }
+  }
+  // Reject empty (unlikely after composition + holes)
+  let cnt = 0;
+  for(let y = 0; y < 5; y++) for(let x = 0; x < 5; x++) if(m[y][x]) cnt++;
+  if(cnt === 0) m[2][2] = 1;
   return m;
 }
 
@@ -749,18 +871,11 @@ function genGlyph(n,p){
   // n ≥ 11 fits ≥2 native 5×5 glyphs with a gap — show a "word/sequence"
   // ~55 % of the time so big cells don't read as identical bloated single-letters.
   if(n >= 11 && r < 0.55) return genMultiGlyph(n);
-  // mutant single — small native size by default; ~20 % chance to upscale at
-  // n≥8 for variety (one big mutant letter among the small ones)
-  if(r < 0.78){
-    const a = _GLYPH_BITS[GLYPH_KEYS[RI(GLYPH_KEYS.length)]];
-    const b = _GLYPH_BITS[GLYPH_KEYS[RI(GLYPH_KEYS.length)]];
-    const scale = (n >= 8 && R() < 0.20);
-    return placeGlyph5(makeMutant(a, b), n, scale);
-  }
-  // straight glyph from font (small, native 5×5 centred unless lucky upscale)
-  const k = GLYPH_KEYS[RI(GLYPH_KEYS.length)];
+  // single glyph (dictionary / procedural / mutant — see _pickGlyph5).
+  // ~20 % chance to upscale at n ≥ 8 for variety (one big letter among the
+  // small ones).
   const scale = (n >= 8 && R() < 0.20);
-  let m = placeGlyph5(_GLYPH_BITS[k], n, scale);
+  let m = placeGlyph5(_pickGlyph5(), n, scale);
   // Light "imperfection" on glyphs too, low probability — Anton wants
   // occasional half-broken letters in the mix, not perfect typography.
   if(R() < 0.18){
@@ -1084,20 +1199,30 @@ function generate(){
 
   if(mode==='carpet' && layout==='grid'){
     // ── carpet · Persian-rug layout ────────────────────────────────────
-    // Real Persian rugs aren't strict square rings — they're rounded medallions
-    // with elliptical or diamond contours. The ring metric is randomized per
-    // carpet:
-    //   · cheb     — Chebyshev (square rings)         classic but rigid
-    //   · euclid   — Euclidean (round rings)          oval/medallion feel
-    //   · ellipse  — Euclidean stretched to grid AR   true elliptical medallion
-    //   · diamond  — Manhattan (rotated 45°)          diamond rings
-    //   · hybrid   — average(cheb, euclid)            soft-cornered square
-    // Plus an azimuthal channel: variant index now combines BOTH ring band
-    // and angle-around-centre, so the carpet has both radial AND tangential
-    // structure — much closer to real rugs than pure concentric.
+    // Real Persian rugs aren't strict equal-width rings of identical motifs.
+    // They're a stack of bands of VARYING width — a thick decorated border,
+    // a narrow piping, a wide field, a thin guard, the central medallion —
+    // each filled by its own rule. We simulate that with three layers:
     //
-    // 4-way mirror symmetry preserved by construction (all metrics are even
-    // in dr/dc, and the angle index is symmetrized to one quadrant).
+    //   1. Variable-width bands (1, 2, or 3 ring-units each) carved out of
+    //      [0, maxRingD]. A 2- or 3-unit band gives the "two-row layer" feel.
+    //
+    //   2. Per-band FILL STRATEGY — what decides which variant a given cell
+    //      gets within a band:
+    //        · rhythm   — A B A A B repeating along ring (current behaviour)
+    //        · subRow   — variant by sub-row INSIDE the band (ladder feel)
+    //        · wave     — sin(angle*lobes+phase) → smooth angular drift
+    //        · spot     — mostly variant 0, occasional "spots" of others
+    //        · azBlock  — angular blocks (1/3 ring is var A, next is B …)
+    //        · solid    — entire band is one variant (calm field/spacer)
+    //
+    //   3. Boundary perturbation — band edges are not perfect ovals;
+    //      we shift effective ringD by a small angle-dependent sine, so the
+    //      band lines undulate slightly. Combined with `wave` and `spot`
+    //      this gives the "trajectory that breaks off into another" feel.
+    //
+    // 4-way mirror symmetry preserved by construction: all inputs (dr, dc,
+    // angle = atan2(|dr|, |dc|) ∈ [0, π/2]) are mirror-invariant.
     const halfR = (rows-1)/2, halfC = (cols-1)/2;
     const SUB_MODES = ['emblem','radial','quad','glyph','h-sym','v-sym','random'];
     const RHYTHMS_2 = [
@@ -1109,13 +1234,11 @@ function generate(){
     // pick ring metric
     const METRICS = ['cheb','euclid','ellipse','diamond','hybrid'];
     const ringMetric = METRICS[Math.floor(R()*METRICS.length)];
-    const aspect = (halfC>0.001 && halfR>0.001) ? (halfC/halfR) : 1;
     const ringDist = (dr, dc) => {
       if(ringMetric==='cheb')    return Math.max(dr, dc);
       if(ringMetric==='diamond') return dr + dc;
       if(ringMetric==='euclid')  return Math.sqrt(dr*dr + dc*dc);
       if(ringMetric==='ellipse'){
-        // normalize so ring 1 ≈ outer edge in grid AR — gives a true oval
         const ny = halfR>0 ? dr/halfR : 0;
         const nx = halfC>0 ? dc/halfC : 0;
         return Math.sqrt(nx*nx + ny*ny) * Math.max(halfR, halfC);
@@ -1124,36 +1247,95 @@ function generate(){
       return 0.5*Math.max(dr,dc) + 0.5*Math.sqrt(dr*dr+dc*dc);
     };
     const maxRingD = Math.max(0.5, ringDist(halfR, halfC));
-    // azimuthal segments — 0 means "no angular variation" (concentric only),
-    // higher = more "spokes". Random per carpet, biased toward some-but-not-too-much.
-    const AZ_SEGS = [1, 2, 3, 4, 6, 8][Math.floor(R()*6)];
-    const BAND_COUNT = Math.max(2, Math.min(5, 2 + Math.floor(R()*3)));
+
+    // Variable-width bands: walk [0, maxRingD] picking widths 1/2/3 (in
+    // ringD units). Probabilities: 50 % single, 30 % double-layer (2 rows),
+    // 20 % triple. Total adds up to roughly maxRingD, last band stretches
+    // to fill any remainder so no gap at the corners.
+    const bandWidths = [];
+    let acc = 0;
+    while(acc < maxRingD - 0.5){
+      const r1 = R();
+      const w = r1 < 0.50 ? 1 : (r1 < 0.80 ? 2 : 3);
+      bandWidths.push(w);
+      acc += w;
+    }
+    if(bandWidths.length < 2) bandWidths.push(Math.max(1, Math.ceil(maxRingD - acc)));
+    const BAND_COUNT = bandWidths.length;
+    const bandEdges = [0];
+    for(const w of bandWidths) bandEdges.push(bandEdges[bandEdges.length-1] + w);
+    // last edge always spans the remaining radius — corners stay covered
+    bandEdges[bandEdges.length-1] = Math.max(bandEdges[bandEdges.length-1], maxRingD + 1);
+
+    // Smooth boundary perturbation — same params used by every band, so the
+    // undulation reads as one coherent "wind" passing through the carpet.
+    const boundLobes = 2 + Math.floor(R() * 4);                 // 2–5
+    const boundPhase = R() * Math.PI;
+    const boundAmp   = 0.15 + R() * 0.55;                       // 0.15–0.7 ringD units
+
+    // Per-band specs: variants + strategy + strategy params. Strategy choice
+    // is biased by band width — wider bands favour subRow (creates clear
+    // double-layer feel), narrower bands favour rhythm/wave/solid.
     const bandSpecs = [];
-    for(let b=0; b<BAND_COUNT; b++){
-      const variantCount = R()<0.5 ? 2 : 3;
-      const rhythm = (variantCount===2 ? RHYTHMS_2 : RHYTHMS_3)[
-        Math.floor(R() * (variantCount===2 ? RHYTHMS_2.length : RHYTHMS_3.length))
-      ];
+    for(let b = 0; b < BAND_COUNT; b++){
+      const w = bandWidths[b];
+      const variantCount = R() < 0.4 ? 2 : 3;
+      const rhythmTbl = variantCount === 2 ? RHYTHMS_2 : RHYTHMS_3;
+      const rhythm = rhythmTbl[Math.floor(R() * rhythmTbl.length)];
       const variants = [];
-      for(let v=0; v<variantCount; v++){
+      for(let v = 0; v < variantCount; v++){
         let vpal = null;
         if(palette && palette.length){
           const len = palette.length;
-          const off = Math.floor(R()*len);
-          const size = Math.max(1, Math.min(len, 1+Math.floor(R()*4)));
+          const off = Math.floor(R() * len);
+          const size = Math.max(1, Math.min(len, 1 + Math.floor(R() * 4)));
           const arr = [];
-          for(let i=0;i<size;i++) arr.push(palette[(off+i)%len]);
+          for(let i = 0; i < size; i++) arr.push(palette[(off + i) % len]);
           vpal = arr;
         }
-        const cap = Math.max(1, maxColors||1);
+        const cap = Math.max(1, maxColors || 1);
         variants.push({
-          mode: SUB_MODES[Math.floor(R()*SUB_MODES.length)],
-          mcol: Math.max(1, Math.min(cap, 1+Math.floor(R()*Math.min(4,cap)))),
+          mode: SUB_MODES[Math.floor(R() * SUB_MODES.length)],
+          mcol: Math.max(1, Math.min(cap, 1 + Math.floor(R() * Math.min(4, cap)))),
           pal: vpal,
         });
       }
-      bandSpecs.push({rhythm, variants});
+      // Strategy roulette — width-aware:
+      //   width ≥ 2  →  subRow gets a fat slice (double-layer feel)
+      //   width = 1  →  rhythm/wave/solid dominate
+      let strat;
+      const sR = R();
+      if(w >= 2){
+        if(sR < 0.40)      strat = 'subRow';
+        else if(sR < 0.60) strat = 'rhythm';
+        else if(sR < 0.74) strat = 'wave';
+        else if(sR < 0.84) strat = 'spot';
+        else if(sR < 0.93) strat = 'azBlock';
+        else               strat = 'solid';
+      } else {
+        if(sR < 0.35)      strat = 'rhythm';
+        else if(sR < 0.55) strat = 'wave';
+        else if(sR < 0.70) strat = 'solid';
+        else if(sR < 0.83) strat = 'spot';
+        else if(sR < 0.93) strat = 'azBlock';
+        else               strat = 'subRow';
+      }
+      const stratParams = {};
+      if(strat === 'wave'){
+        stratParams.lobes = 2 + Math.floor(R() * 4);             // 2–5 lobes
+        stratParams.phase = R() * Math.PI;
+      } else if(strat === 'spot'){
+        stratParams.lobes = 4 + Math.floor(R() * 5);             // 4–8 lobes
+        stratParams.phase = R() * Math.PI;
+        stratParams.threshold = 0.55 + R() * 0.30;               // sparser/denser
+      } else if(strat === 'azBlock'){
+        stratParams.blocks = Math.max(2, variantCount + Math.floor(R() * 3));
+      } else if(strat === 'solid'){
+        stratParams.idx = Math.floor(R() * variantCount);
+      }
+      bandSpecs.push({ rhythm, variants, strat, stratParams, width: w });
     }
+
     // cache keyed by (bandIdx, variantIdx) is the SOURCE quadrant. Every
     // cell on the carpet derives its own (m, grid) by flipping the source
     // through (flipH, flipV). Storing srcKey + flips on each pattern lets
@@ -1177,37 +1359,71 @@ function generate(){
         const dr = Math.abs(r - halfR);
         const dc = Math.abs(c - halfC);
         const ringD = ringDist(dr, dc);
-        let bandIdx = Math.floor((ringD/maxRingD) * BAND_COUNT);
-        if(bandIdx >= BAND_COUNT) bandIdx = BAND_COUNT-1;
-        const band = bandSpecs[bandIdx];
-        // Position index combines:
-        //   minoff   — distance along ring axis→corner (preserves 4-way mirror)
-        //   azIdx    — azimuthal sector (0..AZ_SEGS-1), symmetrized via abs
-        // Both are mirror-invariant, so 4-way symmetry survives. AZ adds the
-        // "spokes" feel — different patterns at top vs. corner of same ring.
-        const minoff = Math.floor(Math.min(dr, dc));
-        let azIdx = 0;
-        if(AZ_SEGS > 1 && ringD > 0.001){
-          // angle in [0, π/2] within mirror quadrant; map to [0, AZ_SEGS)
-          const ang = Math.atan2(dr/Math.max(halfR,0.001), dc/Math.max(halfC,0.001));
-          azIdx = Math.min(AZ_SEGS-1, Math.floor((ang/(Math.PI/2)) * AZ_SEGS));
+        // Mirror-invariant angle in [0, π/2]. Atan2 of NORMALISED dr/dc so
+        // the angle reads aspect-aware (a wide carpet's diagonal still
+        // hits π/4 at the corner).
+        const angle = Math.atan2(dr / Math.max(halfR, 0.001),
+                                  dc / Math.max(halfC, 0.001));
+
+        // Boundary perturbation — slight ring-distance shift along angle so
+        // band edges undulate rather than draw perfect ovals.
+        const ringDeff = Math.max(0, ringD + boundAmp * Math.sin(angle * boundLobes + boundPhase));
+
+        // Find band by edge lookup.
+        let bandIdx = BAND_COUNT - 1;
+        for(let b = 0; b < BAND_COUNT; b++){
+          if(ringDeff < bandEdges[b + 1]){ bandIdx = b; break; }
         }
-        const pos = minoff + azIdx*7; // mix radial + angular into rhythm pos
-        const variantIdx = band.rhythm[((pos % band.rhythm.length) + band.rhythm.length) % band.rhythm.length];
-        const srcKey = bandIdx+','+variantIdx;
+        const band = bandSpecs[bandIdx];
+        const variantCount = band.variants.length;
+
+        // sub-row WITHIN this band — used by subRow strategy and as part
+        // of the rhythm position so wider bands ripple across both rows.
+        const bandStart = bandEdges[bandIdx];
+        const subRow = Math.max(0, Math.min(band.width - 1,
+          Math.floor(ringD - bandStart)));
+
+        // Determine variant by strategy.
+        let variantIdx = 0;
+        if(band.strat === 'rhythm'){
+          // Combines minoff (radial along axis-to-corner) + azimuth (8 sectors)
+          // + subRow so wider bands have richer rhythm than 1-row bands.
+          const minoff = Math.floor(Math.min(dr, dc));
+          const azIdx = Math.min(7, Math.floor((angle / (Math.PI / 2)) * 8));
+          const pos = minoff + azIdx * 7 + subRow * 3;
+          variantIdx = band.rhythm[((pos % band.rhythm.length) + band.rhythm.length) % band.rhythm.length];
+        } else if(band.strat === 'subRow'){
+          variantIdx = subRow % variantCount;
+        } else if(band.strat === 'wave'){
+          // sin(angle * lobes + phase) ∈ [-1, 1] → variant slice.
+          const w = (Math.sin(angle * band.stratParams.lobes + band.stratParams.phase) + 1) * 0.5;
+          variantIdx = Math.min(variantCount - 1, Math.floor(w * variantCount));
+        } else if(band.strat === 'spot'){
+          // Mostly variant 0, but high-magnitude points along sin-wave become
+          // variant 1+. Creates ornamental "dots" on a calm ground.
+          const sig = Math.sin(angle * band.stratParams.lobes + band.stratParams.phase);
+          if(sig >  band.stratParams.threshold) variantIdx = 1 % variantCount;
+          else if(sig < -band.stratParams.threshold && variantCount > 2) variantIdx = 2;
+          else variantIdx = 0;
+        } else if(band.strat === 'azBlock'){
+          const blocks = band.stratParams.blocks;
+          const azIdx = Math.min(blocks - 1, Math.floor((angle / (Math.PI / 2)) * blocks));
+          variantIdx = azIdx % variantCount;
+        } else { // solid
+          variantIdx = band.stratParams.idx;
+        }
+
+        const srcKey = bandIdx + ',' + variantIdx;
         if(!cache[srcKey]){
           const v = band.variants[variantIdx];
           const sub = pickSubMode(v.mode);
           const m0 = genPatternWithMode(sub, n, fill);
           const grid0 = colorize(m0, v.pal, v.mcol, bg, paletteMode);
-          cache[srcKey] = {m:m0, grid:grid0, subMode:sub};
+          cache[srcKey] = {m: m0, grid: grid0, subMode: sub};
         }
         const src = cache[srcKey];
         const flipH = c > halfC;
         const flipV = r > halfR;
-        // ALWAYS create independent copies (even at flipH=flipV=false) so
-        // morph's per-cell mutations don't accidentally alias. Source stays
-        // pristine on state.carpetSources; cells are pure derivations.
         patterns.push({
           m: flipMat(src.m, flipH, flipV),
           grid: flipMat(src.grid, flipH, flipV),
@@ -1310,6 +1526,34 @@ function generate(){
   }
 }
 
+// Format milliseconds as a compact human duration:
+//   <60 s   →  "47s"
+//   <60 m   →  "12m"
+//   <24 h   →  "3h 18m" / "2h"
+//   <30 d   →  "5d 7h"  / "12d"
+//   else    →  "3M"  (months, approximate)
+// Used by the cycle UI so the user can see how long it'd take to view every
+// variant at the current grid size + autoplay speed.
+function _fmtCycleDur(ms){
+  if(!isFinite(ms)) return '∞';
+  if(ms < 1000)        return Math.round(ms) + 'ms';
+  const s = Math.round(ms / 1000);
+  if(s < 60)           return s + 's';
+  const m = Math.round(s / 60);
+  if(m < 60)           return m + 'm';
+  const h = Math.floor(m / 60);
+  const mm = m % 60;
+  if(h < 24)           return mm ? `${h}h ${mm}m` : `${h}h`;
+  const d = Math.floor(h / 24);
+  const hh = h % 24;
+  if(d < 30)           return hh ? `${d}d ${hh}h` : `${d}d`;
+  const mo = Math.floor(d / 30);
+  const dd = d % 30;
+  if(mo < 12)          return dd ? `${mo}M ${dd}d` : `${mo}M`;
+  const y = Math.floor(mo / 12);
+  return y + 'y';
+}
+
 function syncEnumSlider(info){
   const sl = document.getElementById('enumslider');
   const lbl = document.getElementById('enumpos');
@@ -1320,7 +1564,12 @@ function syncEnumSlider(info){
   if(isFinite(denom) && denom > 0){
     const frac = info.startCursor / denom;
     if(!sl.matches(':active')) sl.value = Math.round(frac * 10000);
-    lbl.textContent = `${(frac*100).toFixed(1)}%`;
+    // Estimated full-cycle time = (sweepTotal / patternsPerScreen) × autospeed.
+    // Anton: «понятно по времени, сколько нужно смотреть, чтобы увидеть всё».
+    const ppScreen = (state && state.patterns) ? Math.max(1, state.patterns.length) : 1;
+    const speed = +(getVal('autospeed') || 800);
+    const totalMs = (denom / ppScreen) * speed;
+    lbl.textContent = `${(frac*100).toFixed(1)}% · ${_fmtCycleDur(totalMs)}`;
   } else {
     lbl.textContent = `${info.startCursor.toLocaleString()}`;
   }
@@ -2748,6 +2997,8 @@ document.querySelectorAll('.seg').forEach(seg=>{
         clearInterval(autoplayTimer);
         autoplayTimer = setInterval(tickAutoplay, +seg.dataset.val);
       }
+      // re-render enum cycle-time estimate (depends on autospeed)
+      if(state && state.enumInfo) syncEnumSlider(state.enumInfo);
     });
   });
 })();
