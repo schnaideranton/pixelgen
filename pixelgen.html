@@ -531,38 +531,189 @@ function genEmblem(n,p){
   if(n%2===1) m[c][c]=1;
   return m;
 }
-function genGlyph(n,p){
-  const m=empty(n),c=Math.floor(n/2);
-  const ops=['vline','hline','diag','antidiag','dot','cross','corner','frame','halfframe','lshape','plus','ring'];
-  const count=1+RI(3);
-  const useSym=R()<0.7;
-  const sym=pick(['h','v','quad','none']);
-  const put=(x,y)=>{
-    if(x<0||x>=n||y<0||y>=n)return;
-    m[y][x]=1;
-    if(useSym){
-      if(sym==='h'||sym==='quad') m[y][n-1-x]=1;
-      if(sym==='v'||sym==='quad') m[n-1-y][x]=1;
-      if(sym==='quad') m[n-1-y][n-1-x]=1;
+// ========== glyph (bitmap-font + mutants + pixel circles) ==========
+// Anton: «глиф это как бы скелет некой буквы или символа». So glyph mode now
+// actually attempts to draw recognizable characters: digits 0-9, A-Z capitals,
+// math/arrow/punctuation specials, plus pixel circles AND mutants (half of
+// one glyph spliced with half of another). All glyphs are stored as 5×5 bitmaps
+// and scaled-and-centered into the n×n cell at runtime.
+const GLYPH_FONT_5 = {
+  // digits
+  '0':'01110/10001/10011/11001/01110',
+  '1':'00100/01100/00100/00100/01110',
+  '2':'11110/00001/01110/10000/11111',
+  '3':'11110/00001/00110/00001/11110',
+  '4':'10010/10010/11111/00010/00010',
+  '5':'11111/10000/11110/00001/11110',
+  '6':'01110/10000/11110/10001/01110',
+  '7':'11111/00001/00010/00100/01000',
+  '8':'01110/10001/01110/10001/01110',
+  '9':'01110/10001/01111/00001/01110',
+  // capitals
+  'A':'01110/10001/11111/10001/10001',
+  'B':'11110/10001/11110/10001/11110',
+  'C':'01110/10001/10000/10001/01110',
+  'D':'11110/10001/10001/10001/11110',
+  'E':'11111/10000/11110/10000/11111',
+  'F':'11111/10000/11110/10000/10000',
+  'G':'01110/10000/10011/10001/01111',
+  'H':'10001/10001/11111/10001/10001',
+  'I':'11111/00100/00100/00100/11111',
+  'J':'00111/00010/00010/10010/01100',
+  'K':'10010/10100/11000/10100/10010',
+  'L':'10000/10000/10000/10000/11111',
+  'M':'10001/11011/10101/10001/10001',
+  'N':'10001/11001/10101/10011/10001',
+  'O':'01110/10001/10001/10001/01110',
+  'P':'11110/10001/11110/10000/10000',
+  'Q':'01110/10001/10001/10010/01101',
+  'R':'11110/10001/11110/10010/10001',
+  'S':'01111/10000/01110/00001/11110',
+  'T':'11111/00100/00100/00100/00100',
+  'U':'10001/10001/10001/10001/01110',
+  'V':'10001/10001/10001/01010/00100',
+  'W':'10001/10001/10101/11011/10001',
+  'X':'10001/01010/00100/01010/10001',
+  'Y':'10001/01010/00100/00100/00100',
+  'Z':'11111/00010/00100/01000/11111',
+  // math/sci/arrows
+  '+': '00000/00100/01110/00100/00000',
+  '-': '00000/00000/01110/00000/00000',
+  '×': '00000/01010/00100/01010/00000',
+  '÷': '00100/00000/01110/00000/00100',
+  '=': '00000/01110/00000/01110/00000',
+  '<': '00010/00100/01000/00100/00010',
+  '>': '01000/00100/00010/00100/01000',
+  '↑': '00100/01110/10101/00100/00100',
+  '↓': '00100/00100/10101/01110/00100',
+  '←': '00100/01000/11111/01000/00100',
+  '→': '00100/00010/11111/00010/00100',
+  '↔': '01010/10001/11111/10001/01010',
+  '∞': '00000/01010/10101/01010/00000',
+  '±': '00100/01110/00100/00000/01110',
+  '∇': '11111/01010/01010/00100/00100',
+  '∆': '00100/00100/01010/01010/11111',
+  '√': '00111/00100/00100/10100/11000',
+  '∑': '11111/01000/00100/01000/11111',
+  '∫': '00110/01000/00100/00010/01100',
+  // punctuation / typographic
+  '@': '01110/10001/10111/10100/01110',
+  '#': '01010/11111/01010/11111/01010',
+  '&': '00110/01000/00100/01010/11101',
+  '%': '11000/11010/00100/01011/00011',
+  '$': '00100/01111/01010/11110/00100',
+  '*': '00000/10101/01110/10101/00000',
+  '?': '01110/10001/00010/00100/00100',
+  '!': '00100/00100/00100/00000/00100',
+  '/': '00001/00010/00100/01000/10000',
+  '\\':'10000/01000/00100/00010/00001',
+  '|': '00100/00100/00100/00100/00100',
+  // geometric
+  '◇': '00100/01010/10001/01010/00100',
+  '☐': '11111/10001/10001/10001/11111',
+  '●': '01110/11111/11111/11111/01110',
+  '○': '01110/10001/10001/10001/01110',
+  '▲': '00100/00100/01110/01110/11111',
+  '▼': '11111/01110/01110/00100/00100',
+  '◀': '00010/00110/01110/00110/00010',
+  '▶': '01000/01100/01110/01100/01000',
+  '⌂': '00100/01110/11111/01010/01110',
+};
+const GLYPH_KEYS = Object.keys(GLYPH_FONT_5);
+
+function _parseGlyph5(str){
+  const rows = str.split('/');
+  return rows.map(r => r.split('').map(ch => ch==='1' ? 1 : 0));
+}
+// Cache parsed glyphs once — we reuse them every regen and the parse cost
+// adds up over hundreds of cells.
+const _GLYPH_BITS = {};
+for(const k of GLYPH_KEYS) _GLYPH_BITS[k] = _parseGlyph5(GLYPH_FONT_5[k]);
+
+// Place a 5×5 glyph into an n×n grid. For n ≥ 5 we scale up by floor(n/5)
+// so a 15×15 cell shows a recognizable glyph (3×3 px per font-pixel) rather
+// than a tiny 5×5 island. For n < 5 we sample down — small grids lose detail
+// but still give "letter-shaped" silhouettes.
+function placeGlyph5(g5, n){
+  const m = empty(n);
+  if(n < 5){
+    for(let y=0;y<n;y++) for(let x=0;x<n;x++){
+      const sy = Math.floor(y * 5 / n);
+      const sx = Math.floor(x * 5 / n);
+      m[y][x] = g5[sy][sx];
     }
-  };
-  for(let k=0;k<count;k++){
-    const op=pick(ops);
-    if(op==='vline'){const x=RI(n);for(let y=0;y<n;y++)put(x,y)}
-    else if(op==='hline'){const y=RI(n);for(let x=0;x<n;x++)put(x,y)}
-    else if(op==='diag'){for(let i=0;i<n;i++)put(i,i)}
-    else if(op==='antidiag'){for(let i=0;i<n;i++)put(i,n-1-i)}
-    else if(op==='dot'){put(RI(n),RI(n));put(RI(n),RI(n))}
-    else if(op==='cross'){for(let i=0;i<n;i++){put(c,i);put(i,c)}}
-    else if(op==='plus'){put(c,c);put(c-1,c);put(c+1,c);put(c,c-1);put(c,c+1)}
-    else if(op==='corner'){put(0,0);put(1,0);put(0,1)}
-    else if(op==='frame'){for(let i=0;i<n;i++){put(i,0);put(i,n-1);put(0,i);put(n-1,i)}}
-    else if(op==='halfframe'){for(let i=0;i<n;i++){put(i,0);put(0,i)}}
-    else if(op==='lshape'){for(let i=0;i<n;i++){put(0,i);put(i,n-1)}}
-    else if(op==='ring'){for(let i=1;i<n-1;i++){put(i,1);put(i,n-2);put(1,i);put(n-2,i)}}
+    return m;
   }
-  if(R()<0.25){
-    for(let y=0;y<n;y++)for(let x=0;x<n;x++){if(m[y][x]&&R()<0.15)m[y][x]=0}
+  const cell = Math.max(1, Math.floor(n / 5));
+  const used = cell * 5;
+  const off = Math.floor((n - used) / 2);
+  for(let y=0;y<5;y++) for(let x=0;x<5;x++){
+    if(!g5[y][x]) continue;
+    for(let dy=0;dy<cell;dy++) for(let dx=0;dx<cell;dx++){
+      m[off + y*cell + dy][off + x*cell + dx] = 1;
+    }
+  }
+  return m;
+}
+
+// Pixel circle: midpoint algorithm for outline, fill option for disc.
+// Anton: «попытки сделать круг … которого даже в одном пикселе нет нигде».
+function drawPixelCircle(n, filled){
+  const m = empty(n);
+  const cx = (n-1)/2, cy = (n-1)/2;
+  const r = (n-1)/2;
+  for(let y=0;y<n;y++) for(let x=0;x<n;x++){
+    const dx = x - cx, dy = y - cy;
+    const d = Math.sqrt(dx*dx + dy*dy);
+    if(filled){
+      if(d <= r + 0.001) m[y][x] = 1;
+    } else {
+      // outline ring of width 1
+      if(Math.abs(d - r) < 0.7) m[y][x] = 1;
+    }
+  }
+  return m;
+}
+
+// Mutant: take left half of glyph A + right half of glyph B (or top/bottom,
+// or XOR, or diagonal). Splice point is exactly the centre column/row so the
+// result keeps a glyph silhouette but reads as "broken/recombined letter".
+function makeMutant(g5a, g5b){
+  const out = Array.from({length:5},()=>Array(5).fill(0));
+  const kind = Math.floor(R()*5);
+  for(let y=0;y<5;y++) for(let x=0;x<5;x++){
+    let v;
+    if(kind===0)      v = (x<2) ? g5a[y][x] : (x===2 ? (g5a[y][x]||g5b[y][x]) : g5b[y][x]); // H-split with shared centre col
+    else if(kind===1) v = (y<2) ? g5a[y][x] : (y===2 ? (g5a[y][x]||g5b[y][x]) : g5b[y][x]); // V-split with shared centre row
+    else if(kind===2) v = (x+y < 4) ? g5a[y][x] : g5b[y][x];                                 // anti-diag splice
+    else if(kind===3) v = g5a[y][x] ^ g5b[y][x];                                              // XOR
+    else              v = g5a[y][x] | g5b[y][x];                                              // overlay (union)
+    out[y][x] = v ? 1 : 0;
+  }
+  return out;
+}
+
+function genGlyph(n,p){
+  const r = R();
+  // 12% pixel circle (outline or filled), 28% mutant, otherwise straight glyph.
+  if(r < 0.06 && n >= 5) return drawPixelCircle(n, false);
+  if(r < 0.12 && n >= 5) return drawPixelCircle(n, true);
+  if(r < 0.40){
+    // mutant — splice 2 random glyphs
+    const a = _GLYPH_BITS[GLYPH_KEYS[RI(GLYPH_KEYS.length)]];
+    const b = _GLYPH_BITS[GLYPH_KEYS[RI(GLYPH_KEYS.length)]];
+    return placeGlyph5(makeMutant(a, b), n);
+  }
+  // straight glyph from font
+  const k = GLYPH_KEYS[RI(GLYPH_KEYS.length)];
+  let m = placeGlyph5(_GLYPH_BITS[k], n);
+  // Light "imperfection" on glyphs too, low probability — Anton wants
+  // occasional half-broken letters in the mix, not perfect typography.
+  if(R() < 0.18){
+    const lvl = 0.04 + R()*0.10;
+    for(let y=0;y<n;y++) for(let x=0;x<n;x++){
+      if(R() < lvl) m[y][x] = m[y][x] ? 0 : 1;
+    }
   }
   return m;
 }
@@ -577,12 +728,31 @@ const HYBRID_BAG = ['h-sym','h-sym','v-sym','v-sym','quad','quad','quad','emblem
 
 function density(m){let c=0;const n=m.length;for(const r of m)for(const v of r)if(v)c++;return c/(n*n)}
 
-function genPattern(mode,n,fillPct){
-  const p=fillPct/100;
-  // Fallback: if mode isn't a registered atomic generator (e.g. 'carpet',
-  // which is a layout mode handled in generate()), substitute hybrid so
-  // any path that calls genPattern directly still produces output.
-  const fn = mode==='hybrid' ? MODES[pick(HYBRID_BAG)] : (MODES[mode] || MODES[pick(HYBRID_BAG)]);
+// pickSubMode resolves 'hybrid' / unknown into a real generator key. Exposing
+// it separately lets callers track WHICH atomic mode actually drew this
+// pattern — morph then flips cells inside the SAME mode's fundamental domain,
+// instead of collapsing every hybrid pattern toward 'random' aesthetics.
+function pickSubMode(mode){
+  if(mode === 'hybrid') return pick(HYBRID_BAG);
+  if(!MODES[mode])      return pick(HYBRID_BAG);
+  return mode;
+}
+
+// Imperfection: take a "perfect" symmetric matrix and randomly flip ~level%
+// of its cells. Breaks the perfect symmetry on purpose so hybrid mode can
+// produce "half-deviant" variants — quad with noise, radial with shift, etc.
+// Anton: «чтобы он был чуть-чуть не совершенный а может быть наполовину».
+function applyImperfection(m, level){
+  const n = m.length;
+  for(let y=0;y<n;y++) for(let x=0;x<n;x++){
+    if(R() < level) m[y][x] = m[y][x] ? 0 : 1;
+  }
+  return m;
+}
+
+function genPatternWithMode(subMode, n, fillPct){
+  const p = fillPct/100;
+  const fn = MODES[subMode] || MODES[pick(HYBRID_BAG)];
   let best=null,bestScore=-Infinity;
   for(let i=0;i<8;i++){
     const m=fn(n,p);
@@ -592,6 +762,12 @@ function genPattern(mode,n,fillPct){
     if(score>bestScore){bestScore=score;best=m}
   }
   return best;
+}
+
+// Backward-compatible wrapper: returns just the matrix. Used by older callers
+// that don't care about the resolved sub-mode (single-shot regen, etc.).
+function genPattern(mode,n,fillPct){
+  return genPatternWithMode(pickSubMode(mode), n, fillPct);
 }
 function patHash(m){let s='';for(const r of m)s+=r.join('');return s}
 
@@ -844,45 +1020,53 @@ function generate(){
 
   if(mode==='carpet' && layout==='grid'){
     // ── carpet · Persian-rug layout ────────────────────────────────────
-    // Concentric Chebyshev-distance bands radiate from canvas centre. 4-way
-    // mirror: cells with same (mr, mc) mirror class get same pattern, flipped
-    // H/V/HV per quadrant. When height runs out before width, rings keep
-    // spreading sideways — natural Chebyshev behaviour.
+    // Real Persian rugs aren't strict square rings — they're rounded medallions
+    // with elliptical or diamond contours. The ring metric is randomized per
+    // carpet:
+    //   · cheb     — Chebyshev (square rings)         classic but rigid
+    //   · euclid   — Euclidean (round rings)          oval/medallion feel
+    //   · ellipse  — Euclidean stretched to grid AR   true elliptical medallion
+    //   · diamond  — Manhattan (rotated 45°)          diamond rings
+    //   · hybrid   — average(cheb, euclid)            soft-cornered square
+    // Plus an azimuthal channel: variant index now combines BOTH ring band
+    // and angle-around-centre, so the carpet has both radial AND tangential
+    // structure — much closer to real rugs than pure concentric.
     //
-    // Within each band, alternation: 2–3 variants × a rhythm pattern. Each
-    // variant has its own (sub-mode, palette slice, mcol). Position along
-    // ring picks the variant via rhythm[pos % rhythm.length], so a single
-    // ring reads as e.g. "AABB AABB" or "ABC ABC" instead of one motif.
-    // This is what gives Persian rugs their woven, rhythmic character —
-    // not just concentric stripes but stripes-within-stripes.
-    //
-    // Regenerate refreshes variants/rhythms inside the same carpet structure.
+    // 4-way mirror symmetry preserved by construction (all metrics are even
+    // in dr/dc, and the angle index is symmetrized to one quadrant).
     const halfR = (rows-1)/2, halfC = (cols-1)/2;
-    const maxRing = Math.max(halfR, halfC, 0.5);
     const SUB_MODES = ['emblem','radial','quad','glyph','h-sym','v-sym','random'];
     const RHYTHMS_2 = [
-      [0,1],          // ABAB · steady tick
-      [0,0,1],        // AAB · long-short
-      [0,0,1,1],      // AABB · pair-pair
-      [0,1,1,0],      // ABBA · palindrome
-      [0,0,0,1],      // AAAB · sparse accent
-      [0,1,0,0,1],    // ABAAB · 5-beat
+      [0,1],[0,0,1],[0,0,1,1],[0,1,1,0],[0,0,0,1],[0,1,0,0,1],
     ];
     const RHYTHMS_3 = [
-      [0,1,2],        // ABC · staircase
-      [0,0,1,2],      // AABC · double-A
-      [0,1,2,1],      // ABCB · pendulum
-      [0,1,0,2],      // ABAC · A as base
-      [0,1,2,2,1,0],  // ABCCBA · full palindrome
-      [0,0,1,2,2,1],  // AABCCB · paired palindrome
+      [0,1,2],[0,0,1,2],[0,1,2,1],[0,1,0,2],[0,1,2,2,1,0],[0,0,1,2,2,1],
     ];
-    // 2–4 bands depending on grid size; tiny grids don't need many bands
-    const BAND_COUNT = Math.max(2, Math.min(4, Math.ceil(maxRing/2)));
+    // pick ring metric
+    const METRICS = ['cheb','euclid','ellipse','diamond','hybrid'];
+    const ringMetric = METRICS[Math.floor(R()*METRICS.length)];
+    const aspect = (halfC>0.001 && halfR>0.001) ? (halfC/halfR) : 1;
+    const ringDist = (dr, dc) => {
+      if(ringMetric==='cheb')    return Math.max(dr, dc);
+      if(ringMetric==='diamond') return dr + dc;
+      if(ringMetric==='euclid')  return Math.sqrt(dr*dr + dc*dc);
+      if(ringMetric==='ellipse'){
+        // normalize so ring 1 ≈ outer edge in grid AR — gives a true oval
+        const ny = halfR>0 ? dr/halfR : 0;
+        const nx = halfC>0 ? dc/halfC : 0;
+        return Math.sqrt(nx*nx + ny*ny) * Math.max(halfR, halfC);
+      }
+      // hybrid: half square, half round — soft-cornered medallion
+      return 0.5*Math.max(dr,dc) + 0.5*Math.sqrt(dr*dr+dc*dc);
+    };
+    const maxRingD = Math.max(0.5, ringDist(halfR, halfC));
+    // azimuthal segments — 0 means "no angular variation" (concentric only),
+    // higher = more "spokes". Random per carpet, biased toward some-but-not-too-much.
+    const AZ_SEGS = [1, 2, 3, 4, 6, 8][Math.floor(R()*6)];
+    const BAND_COUNT = Math.max(2, Math.min(5, 2 + Math.floor(R()*3)));
     const bandSpecs = [];
     for(let b=0; b<BAND_COUNT; b++){
-      // 2 or 3 variants per band — 3 gives richer rhythm but eats palette;
-      // bias toward 2 so palette colours aren't spread thinner than mcol can use.
-      const variantCount = R()<0.55 ? 2 : 3;
+      const variantCount = R()<0.5 ? 2 : 3;
       const rhythm = (variantCount===2 ? RHYTHMS_2 : RHYTHMS_3)[
         Math.floor(R() * (variantCount===2 ? RHYTHMS_2.length : RHYTHMS_3.length))
       ];
@@ -906,8 +1090,7 @@ function generate(){
       }
       bandSpecs.push({rhythm, variants});
     }
-    // cache by (bandIdx, variantIdx) — every cell using same band+variant
-    // shares one generated pattern (this is what makes the rhythm "regular")
+    // cache by (bandIdx, variantIdx) — same key still gives one cached pattern
     const cache = Object.create(null);
     const flipMat = (mat, fh, fv) => {
       const sz = mat.length;
@@ -925,28 +1108,38 @@ function generate(){
       for(let c=0;c<cols;c++){
         const dr = Math.abs(r - halfR);
         const dc = Math.abs(c - halfC);
-        const ringD = Math.max(dr, dc);
-        let bandIdx = Math.floor((ringD/maxRing) * BAND_COUNT);
+        const ringD = ringDist(dr, dc);
+        let bandIdx = Math.floor((ringD/maxRingD) * BAND_COUNT);
         if(bandIdx >= BAND_COUNT) bandIdx = BAND_COUNT-1;
         const band = bandSpecs[bandIdx];
-        // Position along ring (mirror-invariant): minoff = 0 at axis, ringD at
-        // corner. Using min(dr,dc) means the rhythm runs from axis outward to
-        // each of the 4 corners identically — preserves 4-way mirror symmetry.
+        // Position index combines:
+        //   minoff   — distance along ring axis→corner (preserves 4-way mirror)
+        //   azIdx    — azimuthal sector (0..AZ_SEGS-1), symmetrized via abs
+        // Both are mirror-invariant, so 4-way symmetry survives. AZ adds the
+        // "spokes" feel — different patterns at top vs. corner of same ring.
         const minoff = Math.floor(Math.min(dr, dc));
-        const variantIdx = band.rhythm[minoff % band.rhythm.length];
+        let azIdx = 0;
+        if(AZ_SEGS > 1 && ringD > 0.001){
+          // angle in [0, π/2] within mirror quadrant; map to [0, AZ_SEGS)
+          const ang = Math.atan2(dr/Math.max(halfR,0.001), dc/Math.max(halfC,0.001));
+          azIdx = Math.min(AZ_SEGS-1, Math.floor((ang/(Math.PI/2)) * AZ_SEGS));
+        }
+        const pos = minoff + azIdx*7; // mix radial + angular into rhythm pos
+        const variantIdx = band.rhythm[((pos % band.rhythm.length) + band.rhythm.length) % band.rhythm.length];
         const key = bandIdx+','+variantIdx;
         if(!cache[key]){
           const v = band.variants[variantIdx];
-          const m0 = genPattern(v.mode, n, fill);
+          const sub = pickSubMode(v.mode);
+          const m0 = genPatternWithMode(sub, n, fill);
           const grid0 = colorize(m0, v.pal, v.mcol, bg, paletteMode);
-          cache[key] = {m:m0, grid:grid0};
+          cache[key] = {m:m0, grid:grid0, subMode:sub};
         }
         const cached = cache[key];
         const flipH = c > halfC;
         const flipV = r > halfR;
         const m = (flipH || flipV) ? flipMat(cached.m, flipH, flipV) : cached.m;
         const grid = (flipH || flipV) ? flipMat(cached.grid, flipH, flipV) : cached.grid;
-        patterns.push({m, grid, band: bandIdx});
+        patterns.push({m, grid, band: bandIdx, subMode: cached.subMode, imperfect:false});
       }
     }
   } else if(enumOn){
@@ -955,39 +1148,72 @@ function generate(){
     const cells = fdomainCells(fdMode, n);
     const fdSize = cells.length;
     const fullTotal = enumTotalForM(fdSize);
-    const key = enumKeyOf(mode, n);
+    // Bias the popcount window by fill%. Anton: «если поставлю 100, должно
+    // быть всё заполнено, а получаются точки» — that's because the old enum
+    // started at popcount 0 and ignored fill entirely. Now we sweep within
+    // a ±5% band of the requested density, so fill=100 → patterns near
+    // fully-on, fill=50 → half-density, fill=10 → very sparse.
+    const targetK = Math.max(0, Math.min(fdSize, Math.round((fill/100) * fdSize)));
+    const bandHalf = Math.max(1, Math.round(fdSize * 0.05));
+    const kLo = Math.max(0, targetK - bandHalf);
+    const kHi = Math.min(fdSize, targetK + bandHalf);
+    let lowerCum = 0;
+    for(let kk=0; kk<kLo; kk++) lowerCum += binomial(fdSize, kk);
+    let bandTotal = 0;
+    for(let kk=kLo; kk<=kHi; kk++) bandTotal += binomial(fdSize, kk);
+    if(!isFinite(bandTotal) || bandTotal <= 0) bandTotal = 1;
+    // include band bounds in key so cursor restarts when fill shifts the window
+    const key = enumKeyOf(mode, n) + '|k' + kLo + '-' + kHi;
     if(key !== enumKey){ enumCursor=0; enumKey=key; }
     const startCursor = enumCursor;
     let firstK=null, lastK=0;
     for(let i=0;i<total;i++){
-      const raw = startCursor + i;
-      const idx = isFinite(fullTotal) ? (raw % fullTotal) : raw;
+      const offset = ((startCursor + i) % bandTotal + bandTotal) % bandTotal;
+      const idx = lowerCum + offset;
       const {k, subset} = enumNthSubset(fdSize, idx);
       if(firstK===null) firstK=k;
       lastK=k;
       const matrix = expandFd(fdMode, n, subset, cells);
       // deterministic per-pattern rng so coloured palettes don't flicker between renders
       rand = mulberry32((idx + 1) * 2654435761 | 0);
-      patterns.push({m:matrix, grid:colorize(matrix, palette, maxColors, bg, paletteMode), band:Math.floor(Math.random()*3)});
+      patterns.push({m:matrix, grid:colorize(matrix, palette, maxColors, bg, paletteMode), band:Math.floor(Math.random()*3), subMode:mode, imperfect:false});
     }
     enumCursor = startCursor + total;
-    if(isFinite(fullTotal) && enumCursor >= fullTotal) enumCursor = enumCursor % fullTotal;
-    enumInfo = {fdMode, fdSize, fullTotal, startCursor, firstK, lastK};
+    if(enumCursor >= bandTotal) enumCursor = enumCursor % bandTotal;
+    enumInfo = {fdMode, fdSize, fullTotal, startCursor, firstK, lastK, kLo, kHi, bandTotal};
     rand = mulberry32(seed); // restore for anything else
   } else {
+    // makeOne resolves the actual sub-mode per pattern, generates with it,
+    // and (in hybrid mode) randomly applies imperfection so the output mixes
+    // clean-symmetric and half-broken-symmetric variants — much more "alive"
+    // than every cell being a textbook quad/radial.
+    const makeOne = () => {
+      const subMode = pickSubMode(mode);
+      const m = genPatternWithMode(subMode, n, fill);
+      let imperfect = false;
+      // Imperfection only fires in hybrid mode (28% chance) — explicit modes
+      // stay clean. Level varies 5–28% so some patterns are barely off and
+      // others are clearly mutant.
+      if(mode === 'hybrid' && R() < 0.28){
+        const level = 0.05 + R()*0.23;
+        applyImperfection(m, level);
+        imperfect = true;
+      }
+      return {m, subMode, imperfect};
+    };
     const hashes=new Set();
     const maxTries=total*25; let tries=0;
     while(patterns.length<total && tries<maxTries){
       tries++;
-      const m=genPattern(mode,n,fill);
-      const h=patHash(m);
+      const out = makeOne();
+      const h = patHash(out.m);
       if(dedup && hashes.has(h)) continue;
       hashes.add(h);
-      patterns.push({m,grid:colorize(m,palette,maxColors,bg,paletteMode), band:Math.floor(Math.random()*3)});
+      patterns.push({m:out.m, grid:colorize(out.m,palette,maxColors,bg,paletteMode), band:Math.floor(Math.random()*3), subMode:out.subMode, imperfect:out.imperfect});
     }
     while(patterns.length<total){
-      const m=genPattern(mode,n,fill);
-      patterns.push({m,grid:colorize(m,palette,maxColors,bg,paletteMode), band:Math.floor(Math.random()*3)});
+      const out = makeOne();
+      patterns.push({m:out.m, grid:colorize(out.m,palette,maxColors,bg,paletteMode), band:Math.floor(Math.random()*3), subMode:out.subMode, imperfect:out.imperfect});
     }
   }
 
@@ -1000,9 +1226,10 @@ function generate(){
   document.getElementById('spatt').textContent=patterns.length;
   document.getElementById('sseed').textContent=enumOn ? '—' : seed;
   if(enumOn && enumInfo){
-    const t = isFinite(enumInfo.fullTotal) ? enumInfo.fullTotal.toLocaleString() : '∞';
+    const t = isFinite(enumInfo.bandTotal) ? enumInfo.bandTotal.toLocaleString() : '∞';
     const kRange = enumInfo.firstK===enumInfo.lastK ? `k=${enumInfo.firstK}` : `k=${enumInfo.firstK}..${enumInfo.lastK}`;
-    setStatus(`enum · ${enumInfo.startCursor.toLocaleString()}→${(enumInfo.startCursor+total-1).toLocaleString()} / ${t} · ${kRange} · ${enumInfo.fdMode}`);
+    const band = `band ${enumInfo.kLo}..${enumInfo.kHi}/${enumInfo.fdSize}`;
+    setStatus(`enum · ${enumInfo.startCursor.toLocaleString()}→${(enumInfo.startCursor+total-1).toLocaleString()} / ${t} · ${kRange} · ${band} · ${enumInfo.fdMode}`);
     syncEnumSlider(enumInfo);
   } else {
     setStatus(`${patterns.length} symbols · ${mode} · ${paletteMode} · seed ${seed}`);
@@ -1013,9 +1240,12 @@ function syncEnumSlider(info){
   const sl = document.getElementById('enumslider');
   const lbl = document.getElementById('enumpos');
   if(!sl || !lbl) return;
-  if(isFinite(info.fullTotal) && info.fullTotal > 0){
-    const frac = info.startCursor / info.fullTotal;
-    // don't fight a drag-in-progress — only update if slider isn't the source
+  // Slider tracks position WITHIN the current popcount-band (fill-biased),
+  // not within the full 2^m universe — so dragging it stays at the
+  // requested density.
+  const denom = (info.bandTotal && isFinite(info.bandTotal)) ? info.bandTotal : info.fullTotal;
+  if(isFinite(denom) && denom > 0){
+    const frac = info.startCursor / denom;
     if(!sl.matches(':active')) sl.value = Math.round(frac * 10000);
     lbl.textContent = `${(frac*100).toFixed(1)}%`;
   } else {
@@ -1853,8 +2083,6 @@ function _animateMorph(){
 function morphStep(filter){
   if(!state || !state.patterns) return;
   const s=state, n=s.n;
-  const fdMode = fdomainMode(s.mode);
-  const cells  = fdomainCells(fdMode, n);
   const palette= getPalette(s.paletteMode, s.bg);
 
   // If filter is provided (3-band dance), finalize any in-flight anim on
@@ -1867,6 +2095,13 @@ function morphStep(filter){
     p.anim = null; // clear stale anim; will be set below if morphed
     if(filter && !filter(p, i)) continue;
     touched = true;
+    // Per-pattern sub-mode: a quad pattern flips orbit-cells inside QUAD's
+    // fundamental domain, a glyph pattern inside 'none' (free), etc. This
+    // is what keeps each cell IN ITS LANE during morph — Anton: «они
+    // должны бы держаться в своих рамках».
+    const pSubMode = p.subMode || s.mode;
+    const fdMode = fdomainMode(pSubMode);
+    const cells  = fdomainCells(fdMode, n);
     const flips = 1 + Math.floor(Math.random()*2); // 1 or 2
     const oldM    = p.m.map(r=>r.slice());
     const oldGrid = p.grid.map(r=>r.slice());
@@ -1874,6 +2109,14 @@ function morphStep(filter){
       const [y,x] = cells[Math.floor(Math.random()*cells.length)];
       const nv = p.m[y][x] ? 0 : 1;
       for(const [oy,ox] of getOrbit(fdMode, n, y, x)) p.m[oy][ox] = nv;
+    }
+    // If pattern was born imperfect (hybrid noise variant), re-sprinkle a
+    // tiny amount of noise during morph so the noise doesn't decay to clean
+    // symmetry over many ticks. Small amount — just keeps the character.
+    if(p.imperfect){
+      for(let y=0;y<n;y++) for(let x=0;x<n;x++){
+        if(Math.random() < 0.04) p.m[y][x] = p.m[y][x] ? 0 : 1;
+      }
     }
     const newGrid = Array.from({length:n},()=>Array(n).fill(null));
     for(let y=0;y<n;y++) for(let x=0;x<n;x++){
@@ -2436,7 +2679,11 @@ document.getElementById('enumslider').addEventListener('input', ()=>{
     slidePending=false;
     const frac = +document.getElementById('enumslider').value / 10000;
     const info = state && state.enumInfo;
-    const total = (info && isFinite(info.fullTotal)) ? info.fullTotal : 1000000;
+    // slider scrubs within the fill-biased popcount band, not the full
+    // 2^m universe. Falls back to fullTotal then to a reasonable default.
+    const total = (info && isFinite(info.bandTotal) && info.bandTotal>0)
+      ? info.bandTotal
+      : ((info && isFinite(info.fullTotal)) ? info.fullTotal : 1000000);
     enumCursor = Math.floor(frac * total);
     generate();
   });
